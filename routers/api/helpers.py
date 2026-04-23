@@ -1,0 +1,151 @@
+"""
+helpers module.
+"""
+
+from datetime import datetime, timezone
+from typing import Optional
+import base64
+import hashlib
+import hmac
+import logging
+import time
+
+from fastapi import HTTPException, Request
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models.domain.auth import User
+from models.domain.user_activity_log import UserActivityLog
+from services.redis.rate_limiting.redis_rate_limiter import RedisRateLimiter
+from utils.auth import get_jwt_secret
+
+_logger = logging.getLogger(__name__)
+
+
+async def log_diagram_edit(user: User, db: AsyncSession, count: int = 1) -> None:
+    """Log diagram_edit events to UserActivityLog for teacher usage tracking."""
+    if getattr(user, "role", None) != "user" or count < 1:
+        return
+    try:
+        now = datetime.now(timezone.utc)
+        for _ in range(min(count, 1000)):
+            log_entry = UserActivityLog(
+                user_id=user.id,
+                activity_type="diagram_edit",
+                created_at=now,
+            )
+            db.add(log_entry)
+        await db.commit()
+    except Exception as exc:
+        _logger.debug("Failed to log diagram_edit: %s", exc)
+        try:
+            await db.rollback()
+        except Exception as rollback_exc:
+            _logger.debug("Rollback after activity log failure: %s", rollback_exc)
+
+
+def get_rate_limit_identifier(current_user: Optional[User], request: Request) -> str:
+    """
+    Get identifier for rate limiting (user ID if authenticated, IP otherwise).
+
+    Args:
+        current_user: Current authenticated user (if any)
+        request: FastAPI request object
+
+    Returns:
+        Rate limit identifier string
+    """
+    if current_user and hasattr(current_user, "id"):
+        return f"user:{current_user.id}"
+    client_ip = request.client.host if request.client else "unknown"
+    return f"ip:{client_ip}"
+
+
+async def check_endpoint_rate_limit(
+    endpoint_name: str,
+    identifier: str,
+    max_requests: int = 30,
+    window_seconds: int = 60,
+) -> None:
+    """
+    Check rate limit for expensive endpoints.
+
+    Args:
+        endpoint_name: Name of the endpoint (for logging)
+        identifier: Rate limit identifier (user ID or IP)
+        max_requests: Maximum requests allowed in window
+        window_seconds: Time window in seconds
+
+    Raises:
+        HTTPException: If rate limit exceeded
+    """
+    logger = logging.getLogger(__name__)
+    rate_limiter = RedisRateLimiter()
+
+    is_allowed, count, error_msg = await rate_limiter.check_and_record(
+        category=f"api_{endpoint_name}",
+        identifier=identifier,
+        max_attempts=max_requests,
+        window_seconds=window_seconds,
+    )
+
+    if not is_allowed:
+        logger.warning(
+            "Rate limit exceeded for %s: %s (%s/%s requests)",
+            endpoint_name,
+            identifier,
+            count,
+            max_requests,
+        )
+        raise HTTPException(status_code=429, detail=f"Too many requests. {error_msg}")
+
+
+def generate_signed_url(filename: str, expiration_seconds: int = 86400) -> str:
+    """
+    Generate a signed URL for temporary image access.
+
+    Args:
+        filename: Image filename
+        expiration_seconds: URL expiration time in seconds (default 24 hours)
+
+    Returns:
+        Signed URL with signature and expiration timestamp
+    """
+    expiration = int(time.time()) + expiration_seconds
+    message = f"{filename}:{expiration}"
+
+    # Generate HMAC signature
+    signature = hmac.new(get_jwt_secret().encode("utf-8"), message.encode("utf-8"), hashlib.sha256).digest()
+
+    # Base64 encode signature for URL safety
+    signature_b64 = base64.urlsafe_b64encode(signature).decode("utf-8").rstrip("=")
+
+    return f"{filename}?sig={signature_b64}&exp={expiration}"
+
+
+def verify_signed_url(filename: str, signature: str, expiration: int) -> bool:
+    """
+    Verify a signed URL for temporary image access.
+
+    Args:
+        filename: Image filename
+        signature: URL signature
+        expiration: Expiration timestamp
+
+    Returns:
+        True if signature is valid and not expired, False otherwise
+    """
+    # Check expiration
+    if int(time.time()) > expiration:
+        return False
+
+    # Reconstruct message
+    message = f"{filename}:{expiration}"
+
+    # Generate expected signature
+    expected_signature = hmac.new(get_jwt_secret().encode("utf-8"), message.encode("utf-8"), hashlib.sha256).digest()
+
+    # Base64 encode for comparison
+    expected_b64 = base64.urlsafe_b64encode(expected_signature).decode("utf-8").rstrip("=")
+
+    # Use constant-time comparison to prevent timing attacks
+    return hmac.compare_digest(signature, expected_b64)

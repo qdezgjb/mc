@@ -1,0 +1,48 @@
+/** so UI — notification */
+export default {
+  'notification.cannotClearTopicOrCenter': 'Lama nadi karo xuduudaha mawduuca ama dhexe',
+  'notification.cannotResetSelectDiagramType':
+    'Lama dib u dejin karo: marka hore dooro nooca sawirka',
+  'notification.canvasClearNodes': 'La nadiyey {count} xuduud',
+  'notification.canvasClearNodesLearning': 'La faafiyey {count} xuduud, lagu daray jawaabaha',
+  'notification.canvasSomeoneEditingNode': 'Qof kale wuxuu wax ka beddelaya xuduudkan',
+  'notification.collabDeleteBlocked':
+    'Lama tirtiri karo inta qof kale uu wax ka beddelayo xuduud la doortay',
+  'notification.collabRedoBlocked': 'Lama dib u sameyn karo inta qof kale uu wax ka beddelayo',
+  'notification.collabUndoBlocked': 'Lama noqon karo inta qof kale uu wax ka beddelayo',
+  'notification.conversationDeleted': 'Wadahadalka waa la tirtiray',
+  'notification.copied': 'Waa lagu koobiyey boodhka',
+  'notification.copyFailed': 'Nuqulkii wuu fashilmay',
+  'notification.deleteFailed': 'Tirtiriddii way fashilantay',
+  'notification.deleted': 'Shayga si guul leh ayaa loo tirtiray',
+  'notification.feedbackCancelled': 'Jawaab celinta waa la saaray',
+  'notification.feedbackThanks': 'Waad ku mahadsan tahay jawaab celintaada',
+  'notification.feedbackThanksDislike':
+    'Waad ku mahadsan tahay jawaab celintaada — waan hagaajin doonaa',
+  'notification.focusQuestionTooShort': "Marka hore geli su'aal diiradda saaran oo dheer",
+  'notification.fullscreenFailed': 'Lama geli karo shaashadda buuxa',
+  'notification.generationCancelled': 'Abuurista waa la joojiyay',
+  'notification.historyClearNodes': 'Nadi qoraalka xuduudka',
+  'notification.historyEmptyLearning': 'Faafo xuduud oo ku dar jawaab',
+  'notification.importInvalidData': 'Soo dejintii way fashilantay: xogta sawirka ma aha mid sax ah',
+  'notification.importLoadFailed': 'Soo dejintii way fashilantay: sawirka lama soo dejin karo',
+  'notification.importSavePartial':
+    'Waa la soo dejiyay, laakiin kaydinta maktabadda way fashilantay',
+  'notification.importSlotsFull':
+    'Maktabaddu way buux dhammaatay; sawirka waa la soo dejiyay laakiin lama kaydin maktabadda',
+  'notification.importSuccess': 'Sawirka waa la soo dejiyay oo lagu kaydiyey maktabadda',
+  'notification.importUnsupportedType': 'Soo dejintii way fashilantay: nooca sawirka lama taageero',
+  'notification.loadMoreFailed': 'Lama soo dejin karo wax dheeraad ah',
+  'notification.networkError': 'Khalad shabakadeed',
+  'notification.newVersionAvailable': 'Nooc cusub ayaa jira. Guji si aad u cusboonaysiiso.',
+  'notification.recommendationFailed': 'Talo-bixintii way fashilantay: {msg}',
+  'notification.relationshipGenerationFailed': 'Abuurista xiriirka way fashilantay',
+  'notification.resetDefaultTemplate': 'Dib u deji qaabka caadiga ah',
+  'notification.rootConceptLinkNotFound': 'Xiriirka fikradda xididka lama helin',
+  'notification.saved': 'Isbeddelada waa la kaydiyey',
+  'notification.selectNodeToClear': 'Dooro xuduud si aad u nadiiso',
+  'notification.sessionInvalidated':
+    'Waxaa lagaa saaray maxaa yeelay waxaad ka badatay tirada ugu badan ee qalabka',
+  'notification.signInToUse': 'Gal si aad u isticmaasho',
+  'notification.signInToValidateFocus': "Gal si aad u xaqiijiso su'aasha diiradda saaran",
+} as const

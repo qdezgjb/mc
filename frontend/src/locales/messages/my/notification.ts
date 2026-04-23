@@ -1,0 +1,49 @@
+/** my UI — notification */
+export default {
+  'notification.cannotClearTopicOrCenter': 'ခေါင်းစဉ် သို့မဟုတ် ဗဟိုအချက်များ ရှင်းလို့ မရပါ',
+  'notification.cannotResetSelectDiagramType':
+    'ပြန်လည်သတ်မှတ်၍ မရပါ—အရင်ဆုံး ပုံသဏ္ဌာန်အမျိုးအစား ရွေးပါ',
+  'notification.canvasClearNodes': 'အချက် {count} ခု ရှင်းလိုက်ပါပြီ',
+  'notification.canvasClearNodesLearning':
+    'အချက် {count} ခု ဗလာဖြစ်သွားပြီး အဖြေများသို့ ထည့်သွင်းထားသည်',
+  'notification.canvasSomeoneEditingNode': 'အခြားသူတစ်ဦးက ဤအချက်ကို ပြင်ဆင်နေသည်',
+  'notification.collabDeleteBlocked':
+    'အခြားအသုံးပြုသူက ရွေးချယ်ထားသော အချက်ကို ပြင်ဆင်နေစဉ် ဖျက်၍ မရပါ',
+  'notification.collabRedoBlocked': 'အခြားအသုံးပြုသူ ပြင်ဆင်နေစဉ် ပြန်လုပ်ခြင်း မပြုနိုင်ပါ',
+  'notification.collabUndoBlocked': 'အခြားအသုံးပြုသူ ပြင်ဆင်နေစဉ် ပြန်ဖျက်ခြင်း မပြုနိုင်ပါ',
+  'notification.conversationDeleted': 'စကားပြောပွဲ ဖျက်လိုက်ပါပြီ',
+  'notification.copied': 'ကလစ်ဘုတ်သို့ ကူးယူပြီးပါပြီ',
+  'notification.copyFailed': 'ကူးယူမှု မအောင်မြင်ပါ',
+  'notification.deleteFailed': 'ဖျက်မှု မအောင်မြင်ပါ',
+  'notification.deleted': 'အရာကို အောင်မြင်စွာ ဖျက်လိုက်ပါပြီ',
+  'notification.feedbackCancelled': 'တုံ့ပြန်ချက် ဖယ်ရှားလိုက်ပါပြီ',
+  'notification.feedbackThanks': 'တုံ့ပြန်ချက်အတွက် ကျေးဇူးတင်ပါသည်',
+  'notification.feedbackThanksDislike':
+    'တုံ့ပြန်ချက်အတွက် ကျေးဇူးတင်ပါသည် — ပိုကောင်းအောင် လုပ်ပါမည်',
+  'notification.focusQuestionTooShort': 'အရင်ဆုံး ပိုရှည်သော အာရုံစိုက်မေးခွန်း ထည့်ပါ',
+  'notification.fullscreenFailed': 'မျက်နှာပြင်အပြည့် ဝင်လို့ မရပါ',
+  'notification.generationCancelled': 'ထုတ်လုပ်မှု ပယ်ဖျက်လိုက်ပါပြီ',
+  'notification.historyClearNodes': 'အချက် စာသား ရှင်းပါ',
+  'notification.historyEmptyLearning': 'အချက်ကို ဗလာဖြစ်စေပြီး အဖြေ ထည့်ပါ',
+  'notification.importInvalidData': 'ထည့်သွင်းမှု မအောင်မြင်ပါ—ပုံသဏ္ဌာန် ဒေတာ မမှန်ကန်',
+  'notification.importLoadFailed': 'ထည့်သွင်းမှု မအောင်မြင်ပါ—ပုံသဏ္ဌာန် ဖွင့်၍ မရပါ',
+  'notification.importSavePartial': 'ထည့်သွင်းပြီးသော်လည်း စာကြည့်တိုက်တွင် သိမ်းဆည်း၍ မရပါ',
+  'notification.importSlotsFull':
+    'စာကြည့်တိုက် ပြည့်ပါပြီ—ပုံသဏ္ဌာန် ထည့်သွင်းပြီးသော်လည်း စာကြည့်တိုက်တွင် မသိမ်းဆည်းပါ',
+  'notification.importSuccess': 'ပုံသဏ္ဌာန် ထည့်သွင်းပြီး စာကြည့်တိုက်တွင် သိမ်းဆည်းပြီးပါပြီ',
+  'notification.importUnsupportedType':
+    'ထည့်သွင်းမှု မအောင်မြင်ပါ—မပံ့ပိုးသော ပုံသဏ္ဌာန် အမျိုးအစား',
+  'notification.loadMoreFailed': 'ထပ်မံ ဖွင့်၍ မရပါ',
+  'notification.networkError': 'ကွန်ရက် အမှား',
+  'notification.newVersionAvailable': 'ဗားရှင်းအသစ် ရှိပါသည်။ ပြန်လည်စတင်ရန် နှိပ်ပါ။',
+  'notification.recommendationFailed': 'အကြံပြုချက် မအောင်မြင်ပါ—{msg}',
+  'notification.relationshipGenerationFailed': 'ဆက်ဆံရေး ထုတ်လုပ်မှု မအောင်မြင်ပါ',
+  'notification.resetDefaultTemplate': 'မူလနမူနာသို့ ပြန်သတ်မှတ်ပါ',
+  'notification.rootConceptLinkNotFound': 'အမြစ်အဓိပ္ပါယ် လင့်ခ် မတွေ့ပါ',
+  'notification.saved': 'ပြောင်းလဲမှုများ သိမ်းဆည်းပြီးပါပြီ',
+  'notification.selectNodeToClear': 'ရှင်းလင်းရန် အချက်တစ်ခု ရွေးပါ',
+  'notification.sessionInvalidated':
+    'စက်ပစ္စည်းအရေအတွက် အများဆုံးထက် ကျော်လွန်သဖြင့် ထွက်ပေးလိုက်ပါပြီ',
+  'notification.signInToUse': 'အသုံးပြုရန် ဝင်ရောက်ပါ',
+  'notification.signInToValidateFocus': 'အာရုံစိုက်မေးခွန်း အတည်ပြုရန် ဝင်ရောက်ပါ',
+} as const

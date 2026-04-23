@@ -1,0 +1,47 @@
+/** ro UI — notification */
+export default {
+  'notification.cannotClearTopicOrCenter': 'Nu se pot șterge nodurile de subiect sau centrale',
+  'notification.cannotResetSelectDiagramType':
+    'Nu se poate reseta: selectați mai întâi un tip de diagramă',
+  'notification.canvasClearNodes': '{count} noduri golite',
+  'notification.canvasClearNodesLearning': '{count} noduri golite, adăugate la răspunsuri',
+  'notification.canvasSomeoneEditingNode': 'Altcineva editează acest nod',
+  'notification.collabDeleteBlocked':
+    'Nu se poate șterge cât timp alt utilizator editează un nod selectat',
+  'notification.collabRedoBlocked': 'Nu se poate reface cât timp alt utilizator editează',
+  'notification.collabUndoBlocked': 'Nu se poate anula cât timp alt utilizator editează',
+  'notification.conversationDeleted': 'Conversație ștearsă',
+  'notification.copied': 'Copiat în clipboard',
+  'notification.copyFailed': 'Copierea a eșuat',
+  'notification.deleteFailed': 'Ștergerea a eșuat',
+  'notification.deleted': 'Element șters cu succes',
+  'notification.feedbackCancelled': 'Feedback eliminat',
+  'notification.feedbackThanks': 'Mulțumim pentru feedback',
+  'notification.feedbackThanksDislike': 'Mulțumim pentru feedback — vom îmbunătăți',
+  'notification.focusQuestionTooShort': 'Introduceți mai întâi o întrebare focală mai lungă',
+  'notification.fullscreenFailed': 'Nu s-a putut intra în ecran complet',
+  'notification.generationCancelled': 'Generare anulată',
+  'notification.historyClearNodes': 'Șterge textul nodului',
+  'notification.historyEmptyLearning': 'Golește nodul și adaugă răspuns',
+  'notification.importInvalidData': 'Import eșuat: date diagramă nevalide',
+  'notification.importLoadFailed': 'Import eșuat: diagrama nu a putut fi încărcată',
+  'notification.importSavePartial': 'Importat, dar salvarea în bibliotecă a eșuat',
+  'notification.importSlotsFull':
+    'Bibliotecă plină; diagramă importată dar nesalvată în bibliotecă',
+  'notification.importSuccess': 'Diagramă importată și salvată în bibliotecă',
+  'notification.importUnsupportedType': 'Import eșuat: tip de diagramă neacceptat',
+  'notification.loadMoreFailed': 'Nu s-a putut încărca mai mult',
+  'notification.networkError': 'Eroare de rețea',
+  'notification.newVersionAvailable':
+    'Versiune nouă disponibilă. Faceți clic pentru a reîmprospăta.',
+  'notification.recommendationFailed': 'Recomandare eșuată: {msg}',
+  'notification.relationshipGenerationFailed': 'Generarea relațiilor a eșuat',
+  'notification.resetDefaultTemplate': 'Resetare la șablonul implicit',
+  'notification.rootConceptLinkNotFound': 'Legătura conceptului rădăcină nu a fost găsită',
+  'notification.saved': 'Modificări salvate',
+  'notification.selectNodeToClear': 'Selectați un nod de șters',
+  'notification.sessionInvalidated':
+    'Ați fost deconectat deoarece ați depășit numărul maxim de dispozitive',
+  'notification.signInToUse': 'Conectați-vă pentru a folosi',
+  'notification.signInToValidateFocus': 'Conectați-vă pentru a valida întrebarea focală',
+} as const

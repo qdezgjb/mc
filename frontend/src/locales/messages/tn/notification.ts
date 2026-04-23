@@ -1,0 +1,48 @@
+/** tn UI — notification */
+export default {
+  'notification.cannotClearTopicOrCenter':
+    'Ga go kgona go phimola dikgato tsa setlhogo kgotsa bogare',
+  'notification.cannotResetSelectDiagramType':
+    'Ga go kgona go busetsa: tlola mofuta wa setshwantsho pele',
+  'notification.canvasClearNodes': 'Dikgato tse {count} di phimotswe',
+  'notification.canvasClearNodesLearning': 'Dikgato tse {count} di tlogetswe, di oketswe dikarabo',
+  'notification.canvasSomeoneEditingNode': 'Mongwe o ba a rulaganya kgato eno',
+  'notification.collabDeleteBlocked':
+    'Ga go kgona go phimola fa mongwe a rulaganya kgato e e tlhophilweng',
+  'notification.collabRedoBlocked': 'Ga go kgona go dira gape fa mongwe a rulaganya',
+  'notification.collabUndoBlocked': 'Ga go kgona go busetsa fa mongwe a rulaganya',
+  'notification.conversationDeleted': 'Puisano e phimotswe',
+  'notification.copied': 'E kopilwe mo bokodining',
+  'notification.copyFailed': 'Kopi e palelwe',
+  'notification.deleteFailed': 'Go phimola go palelwe',
+  'notification.deleted': 'Selo se phimolwe ka katlego',
+  'notification.feedbackCancelled': 'Karabo e ntshiitswe',
+  'notification.feedbackThanks': 'Ke a leboga ka karabo ya gago',
+  'notification.feedbackThanksDislike': 'Ke a leboga ka karabo ya gago — re tla tokafatsa',
+  'notification.focusQuestionTooShort': 'Tlisa potso e telele ya kgopolo pele',
+  'notification.fullscreenFailed': 'Ga go kgona go tsena mo skrineng e e tletseng',
+  'notification.generationCancelled': 'Tlhagiso e khanselletswe',
+  'notification.historyClearNodes': 'Phimola mafoko a kgato',
+  'notification.historyEmptyLearning': 'Tlolela kgato o oketse karabo',
+  'notification.importInvalidData':
+    'Go tsenisa go palelwe: tshedimosetso ya setshwantsho e sa siame',
+  'notification.importLoadFailed': 'Go tsenisa go palelwe: setshwantsho ga se ka laodiwa',
+  'notification.importSavePartial': 'Se tsentswe, mme go boloka mo polokong go palelwe',
+  'notification.importSlotsFull':
+    'Poloko e tletse; setshwantsho se tsentswe mme ga se bolokwe mo polokong',
+  'notification.importSuccess': 'Setshwantsho se tsentswe mme se bolokilwe mo polokong',
+  'notification.importUnsupportedType':
+    'Go tsenisa go palelwe: mofuta wa setshwantsho o sa tshegetsweng',
+  'notification.loadMoreFailed': 'Ga go kgona go laoda go oketsegileng',
+  'notification.networkError': 'Phoso ya neteweke',
+  'notification.newVersionAvailable': 'Go na le mofuta o moswa. Tobetsa go ntšha.',
+  'notification.recommendationFailed': 'Taelo e palelwe: {msg}',
+  'notification.relationshipGenerationFailed': 'Go tlhaga kgokagano go palelwe',
+  'notification.resetDefaultTemplate': 'Busetsa mo setlhalong sa tlwaelo',
+  'notification.rootConceptLinkNotFound': 'Kgokagano ya kgopolo ya motso ga e bonwe',
+  'notification.saved': 'Diphetogo di bolokilwe',
+  'notification.selectNodeToClear': 'Tlhopha kgato ya go phimola',
+  'notification.sessionInvalidated': 'O tswile ka lebaka la go feta palo ya godimo ya didiriswa',
+  'notification.signInToUse': 'Tsena o dirise',
+  'notification.signInToValidateFocus': 'Tsena o netefatse potso ya kgopolo',
+} as const

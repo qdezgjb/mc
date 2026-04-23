@@ -1,0 +1,47 @@
+/** nl UI — notification */
+export default {
+  'notification.cannotClearTopicOrCenter': 'Kan onderwerp- of centrumknopen niet wissen',
+  'notification.cannotResetSelectDiagramType': 'Kan niet resetten: selecteer eerst een diagramtype',
+  'notification.canvasClearNodes': '{count} knoop/knopen gewist',
+  'notification.canvasClearNodesLearning':
+    '{count} knoop/knopen geleegd, toegevoegd aan antwoorden',
+  'notification.canvasSomeoneEditingNode': 'Iemand anders bewerkt deze knoop',
+  'notification.collabDeleteBlocked':
+    'Kan niet verwijderen terwijl een andere gebruiker een geselecteerde knoop bewerkt',
+  'notification.collabRedoBlocked':
+    'Kan niet opnieuw uitvoeren terwijl een andere gebruiker bewerkt',
+  'notification.collabUndoBlocked': 'Kan niet ongedaan maken terwijl een andere gebruiker bewerkt',
+  'notification.conversationDeleted': 'Gesprek verwijderd',
+  'notification.copied': 'Gekopieerd naar klembord',
+  'notification.copyFailed': 'Kopiëren mislukt',
+  'notification.deleteFailed': 'Verwijderen mislukt',
+  'notification.deleted': 'Item succesvol verwijderd',
+  'notification.feedbackCancelled': 'Feedback verwijderd',
+  'notification.feedbackThanks': 'Bedankt voor uw feedback',
+  'notification.feedbackThanksDislike': 'Bedankt voor uw feedback — we verbeteren',
+  'notification.focusQuestionTooShort': 'Voer eerst een langere focusvraag in',
+  'notification.fullscreenFailed': 'Kan niet naar volledig scherm',
+  'notification.generationCancelled': 'Generatie geannuleerd',
+  'notification.historyClearNodes': 'Knooptekst wissen',
+  'notification.historyEmptyLearning': 'Knoop legen en antwoord toevoegen',
+  'notification.importInvalidData': 'Importeren mislukt: ongeldige diagramgegevens',
+  'notification.importLoadFailed': 'Importeren mislukt: diagram kon niet worden geladen',
+  'notification.importSavePartial': 'Geïmporteerd, maar opslaan in bibliotheek mislukt',
+  'notification.importSlotsFull':
+    'Bibliotheek vol; diagram geïmporteerd maar niet opgeslagen in bibliotheek',
+  'notification.importSuccess': 'Diagram geïmporteerd en opgeslagen in bibliotheek',
+  'notification.importUnsupportedType': 'Importeren mislukt: niet-ondersteund diagramtype',
+  'notification.loadMoreFailed': 'Kon niet meer laden',
+  'notification.networkError': 'Netwerkfout',
+  'notification.newVersionAvailable': 'Nieuwe versie beschikbaar. Klik om te vernieuwen.',
+  'notification.recommendationFailed': 'Aanbeveling mislukt: {msg}',
+  'notification.relationshipGenerationFailed': 'Relaties genereren mislukt',
+  'notification.resetDefaultTemplate': 'Terugzetten naar standaardsjabloon',
+  'notification.rootConceptLinkNotFound': 'Rootconceptkoppeling niet gevonden',
+  'notification.saved': 'Wijzigingen opgeslagen',
+  'notification.selectNodeToClear': 'Selecteer een knoop om te wissen',
+  'notification.sessionInvalidated':
+    'U bent uitgelogd omdat u het maximaal aantal apparaten heeft overschreden',
+  'notification.signInToUse': 'Meld u aan om dit te gebruiken',
+  'notification.signInToValidateFocus': 'Meld u aan om de focusvraag te valideren',
+} as const

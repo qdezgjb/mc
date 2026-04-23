@@ -1,0 +1,45 @@
+/**
+ * Pinia Stores Index
+ */
+
+export type { DiagramId } from '@/types'
+
+export { useConceptMapRelationshipStore } from './conceptMapRelationship'
+export { useConceptMapFocusReviewStore } from './conceptMapFocusReview'
+export { useConceptMapRootConceptReviewStore } from './conceptMapRootConceptReview'
+export { useInlineRecommendationsStore } from './inlineRecommendations'
+export {
+  useDiagramStore,
+  subscribeToDiagramEvents,
+  type DiagramEventType,
+  type DiagramEvent,
+} from './diagram'
+export { usePanelsStore } from './panels'
+export { useAuthStore } from './auth'
+export {
+  useUIStore,
+  type AppMode,
+  type Language,
+  DIAGRAM_TEMPLATES,
+  getDiagramTemplateBody,
+} from './ui'
+export { useVoiceStore } from './voice'
+export { useMindMateStore, type MindMateConversation } from './mindmate'
+export {
+  useSavedDiagramsStore,
+  type SavedDiagram,
+  type SavedDiagramFull,
+  type AutoSaveResult,
+} from './savedDiagrams'
+export { useLLMResultsStore, type LLMResult, type LLMModel, type ModelState } from './llmResults'
+export { useAskOnceStore, type AskOnceMessage, type ModelResponse, type ModelId } from './askonce'
+export { useKnowledgeSpaceStore, type KnowledgeDocument } from './knowledgeSpace'
+export { useFeatureFlagsStore } from './featureFlags'
+export {
+  usePresentationPointerStore,
+  PRESENTATION_POINTER_SCALE_MIN,
+  PRESENTATION_POINTER_SCALE_MAX,
+  PRESENTATION_POINTER_SCALE_STEP,
+} from './presentationPointer'
+export { useLibraryStore } from './library'
+export { useSmartResponseStore, type Watch, type SmartResponseSession } from './smartResponse'

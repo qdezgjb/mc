@@ -1,0 +1,48 @@
+/** st UI — notification */
+export default {
+  'notification.cannotClearTopicOrCenter':
+    'Ha ho khone ho hlwekisa litekete tsa sehlooho kapa bohare',
+  'notification.cannotResetSelectDiagramType':
+    'Ha ho khone ho bulela hape: kgetha mofuta wa setshwantsho pele',
+  'notification.canvasClearNodes': 'Litekete tse {count} li hlwekisitswe',
+  'notification.canvasClearNodesLearning':
+    'Litekete tse {count} li se nang letho, li kentsoe likarabo',
+  'notification.canvasSomeoneEditingNode': 'Ya mong a ntse a fetola tekete ena',
+  'notification.collabDeleteBlocked':
+    'Ha ho khone ho hlakola ha motho a fetola tekete e kgethilweng',
+  'notification.collabRedoBlocked': 'Ha ho khone ho etsa hape ha motho a fetola',
+  'notification.collabUndoBlocked': 'Ha ho khone ho busetsa ha motho a fetola',
+  'notification.conversationDeleted': 'Puisano e hlakotsoe',
+  'notification.copied': 'E kopitswe ho clipboard',
+  'notification.copyFailed': 'Ho kopitsa ha hlolile',
+  'notification.deleteFailed': 'Ho hlakola ha hlolile',
+  'notification.deleted': 'Ntho e hlakotsoe ka katleho',
+  'notification.feedbackCancelled': 'Tlhaloso e tlositswe',
+  'notification.feedbackThanks': 'Rea leboha ka tlhaloso ya hao',
+  'notification.feedbackThanksDislike': 'Rea leboha ka tlhaloso ya hao — re tla ntlafatsa',
+  'notification.focusQuestionTooShort': 'Kenya potso e telele ya kgopolo pele',
+  'notification.fullscreenFailed': 'Ha ho khone ho kena skrineng e tletseng',
+  'notification.generationCancelled': 'Ho hlahisa ho khanselletswe',
+  'notification.historyClearNodes': 'Hlwekisa mongolo wa tekete',
+  'notification.historyEmptyLearning': 'Senya tekete o kenye karabo',
+  'notification.importInvalidData': 'Ho kenya ha hlolile: lintlha tsa setshwantsho ha li nepahale',
+  'notification.importLoadFailed': 'Ho kenya ha hlolile: setshwantsho ha se ka laodwa',
+  'notification.importSavePartial': 'Se kentsoe, empa ho boloka polokong ha hlolile',
+  'notification.importSlotsFull':
+    'Poloko e tletse; setshwantsho se kentsoe empa ha se bolokilwe polokong',
+  'notification.importSuccess': 'Setshwantsho se kentsoe mme se bolokilwe polokong',
+  'notification.importUnsupportedType':
+    'Ho kenya ha hlolile: mofuta wa setshwantsho ha o tshegetsoe',
+  'notification.loadMoreFailed': 'Ha ho khone ho laoda ho feta',
+  'notification.networkError': 'Phoso ya neteweke',
+  'notification.newVersionAvailable': 'Ho na le mofuta o mocha. Tobetsa ho ntlafatsa.',
+  'notification.recommendationFailed': 'Taelo e hlolile: {msg}',
+  'notification.relationshipGenerationFailed': 'Ho hlahisa kamano ha hlolile',
+  'notification.resetDefaultTemplate': 'Busetsa ho setšoantšo sa kamehla',
+  'notification.rootConceptLinkNotFound': 'Kgokagano ya kgopolo ya motso ha e fumanwe',
+  'notification.saved': 'Liphetoho li bolokilwe',
+  'notification.selectNodeToClear': 'Kgetha tekete ya ho hlwekisa',
+  'notification.sessionInvalidated': 'O tswile ka lebaka la ho feta palo e hodimo ya lisebelisoa',
+  'notification.signInToUse': 'Kena ho sebelisa',
+  'notification.signInToValidateFocus': 'Kena ho netefatsa potso ya kgopolo',
+} as const

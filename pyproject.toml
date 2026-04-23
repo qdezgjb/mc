@@ -1,0 +1,214 @@
+[tool.pyright]
+include = ["**/*.py"]
+exclude = [
+    "**/__pycache__",
+    "**/node_modules",
+    "**/venv",
+    "**/.venv",
+    "**/dist",
+    "**/build",
+    "**/*.toml",
+    "pyproject.toml"
+]
+# No venv - using system Python
+pythonVersion = "3.13"
+typeCheckingMode = "basic"
+reportMissingImports = false  # Suppress false positive import warnings for installed packages
+reportMissingTypeStubs = false
+reportMissingModuleSource = false  # Suppress import resolution errors for known installed packages
+pythonPlatform = "Linux"
+extraPaths = [
+    "C:\\Users\\roywang\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages"
+]
+
+[tool.pylint.main]
+# Ensure project root is in path for import resolution (fixes E1123 on agent_graph_workflow_with_styles)
+init-hook = 'import sys; import os; sys.path.insert(0, os.getcwd())'
+# Exclude patterns (numeric Alembic revision filenames are not snake_case module names)
+ignore-patterns = [
+    "^venv/",
+    "^.venv/",
+    "^__pycache__/",
+    "^node_modules/",
+    "^dist/",
+    "^build/",
+    "^.*\\.toml$",
+    "^pyproject\\.toml$",
+    "^alembic/versions/",
+]
+# Pylint 3+: directory paths to skip (ensures migration files are not linted when ignore-patterns is ignored)
+ignore-paths = [
+    "alembic/versions",
+    "frontend/node_modules",
+    # Mostly long prompt strings; line length is enforced elsewhere (editors, ruff where applicable).
+    "prompts",
+]
+
+# Output format
+output-format = "text"
+
+# Maximum line length
+max-line-length = 120
+
+# Disable checks that are structural / intentional for this codebase
+disable = [
+    "too-few-public-methods",  # Common for data classes and utilities
+    "broad-except",  # Exception handling often needs to catch all exceptions for error recovery
+    "duplicate-code",  # Large codebase shares similar patterns; refactor is tracked separately
+    "arguments-renamed",  # Subclasses intentionally align API with different parameter names
+    "global-statement",  # Singleton and lazy-init patterns use module-level globals
+]
+
+[tool.pylint.format]
+max-line-length = 120
+indent-string = "    "
+
+[tool.pylint.design]
+# Typical modules: 600-800 lines; some generated or router modules are larger.
+max-module-lines = 4000
+# Thresholds aligned with real services (routers, LLM clients, error parsers, lifespan)
+max-args = 35
+max-locals = 120
+max-branches = 250
+max-statements = 500
+max-attributes = 45
+max-public-methods = 45
+max-returns = 100
+max-bool-expr = 10
+max-nested-blocks = 15
+max-parents = 15
+
+[tool.pylint.basic]
+# Good variable names regex
+good-names = [
+    "i",
+    "j",
+    "k",
+    "ex",
+    "Run",
+    "_",
+    "id",
+    "db",
+    "api",
+    "url",
+    "uid",
+    "e",
+    "x",
+    "y",
+    "z",
+    "SessionLocal",
+    "SyncSessionLocal",
+    "AsyncSessionLocal",
+    "_jwt_secret_cache",
+    "AES",
+    "LIBRARY_MODULE",
+    "DEBATEVERSE_MODULE",
+    "COMMUNITY_MODULE",
+    "GEWE_MODULE",
+    "WORKSHOP_CHAT_MODULE",
+    "WORKSHOP_CHAT_WS_MODULE",
+    "KNOWLEDGE_SPACE_MODULE",
+    "MARKETS_MODULE",
+    "MINDBOT_MODULE",
+    "_embedding_client",
+    "_embedding_service",
+    "_tts_service",
+    "_kb_rate_limiter",
+    "_db_check_state_manager",
+    "_integrity_check_lock_id",
+    "_integrity_check_cache",
+    "_load_balancer",
+    "_keyword_search_service",
+    "_activity_stream_service",
+    "_city_flag_tracker",
+    "_session_manager",
+    "_registration_metrics",
+    "_refresh_token_manager",
+    "_api_key_cache",
+    "_get_bayi_whitelist",
+    "_get_redis",
+    "_is_redis_available",
+    "_get_async_redis",
+    "_redis_available",
+    "_user_cache",
+    "_dingtalk_session",
+    "_outbound_session",
+    "_shutting_down",
+    "_client",
+    # Alembic migration module attributes (required names; not UPPER_CASE)
+    "revision",
+    "down_revision",
+    "branch_labels",
+    "depends_on",
+]
+# Allow UPPER_CASE for class attributes (constants)
+class-attribute-rgx = "^[A-Z][A-Z0-9_]*$|^[a-z_][a-z0-9_]*$"
+# Allow UPPER_CASE for attributes (properties that represent constants)
+attr-rgx = "^[A-Z][A-Z0-9_]*$|^[a-z_][a-z0-9_]*$"
+# Methods follow snake_case (3-31 chars). Names starting with ``test_`` may be
+# longer (up to 80 chars after the prefix). AST visitors must use the
+# ``visit_<NodeType>`` form mandated by ast.NodeVisitor.
+method-rgx = "^(?:[a-z_][a-z0-9_]{2,40}|test_[a-z0-9_]{2,80}|visit_[A-Za-z][a-zA-Z0-9_]*|validate_[a-z0-9_]{2,80})$"
+
+[tool.pylint.messages_control]
+# Merged with [tool.pylint.main] disable list by pylint
+disable = [
+    "broad-except",
+    "too-many-positional-arguments",  # Palette generators must match BasePaletteGenerator API
+    "duplicate-code",
+    "arguments-renamed",
+    "global-statement",
+    "cyclic-import",  # FastAPI app wiring has intentional cycles; tracked in architecture
+    "no-else-return",
+    "no-else-raise",
+    "no-else-continue",
+    "no-else-break",
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "protected-access",
+    "attribute-defined-outside-init",
+    "consider-using-with",  # Many resources managed by framework or explicit close()
+    "import-outside-toplevel",  # Lazy imports to avoid cycles and optional deps
+    "wrong-import-position",
+    "ungrouped-imports",
+    "pointless-string-statement",  # Module markers / section dividers
+    "chained-comparison",
+    "consider-iterating-dictionary",
+    "unnecessary-dunder-call",
+    "inconsistent-return-statements",
+]
+
+[tool.pylint.typecheck]
+# Optional/runtime deps not always installed in CI lint env.
+# sqlalchemy uses heavy metaprogramming; func.* and mapped_column() members
+# cannot be statically resolved by pylint.
+ignored-modules = [
+    "semchunk",
+    "jieba3",
+    "sqlalchemy",
+    "alembic",
+    "geoip2",
+    "opencc",
+    "orjson",
+]
+
+# Ruff: formatter + linter (closest to ESLint/Prettier for Python). Run: ruff format . && ruff check --fix .
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+exclude = [
+    "frontend",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "node_modules",
+]
+
+[tool.ruff.lint]
+# E402: imports after sys.path / env setup in scripts and some infra modules
+ignore = ["E402"]
+
+[tool.ruff.lint.per-file-ignores]
+# SQLAlchemy relationship() forward refs (Mapped["User"], etc.)
+"models/domain/**/*.py" = ["F821"]

@@ -1,0 +1,483 @@
+/**
+ * Vue Router Configuration
+ */
+import { type RouteRecordRaw, createRouter, createWebHistory } from 'vue-router'
+
+import { useMobileDetect } from '@/composables/core/useMobileDetect'
+import { useAuthStore } from '@/stores/auth'
+import { useFeatureFlagsStore } from '@/stores/featureFlags'
+import { useUIStore } from '@/stores/ui'
+import { userCanAccessMindbotAdmin } from '@/utils/mindbotAccess'
+import { userCanAccessWorkshopChat } from '@/utils/workshopAccess'
+
+/** Localized `document.title` via `meta.pageTitle.*` keys. */
+function pageTitle(segment: string): { titleKey: string } {
+  return { titleKey: `meta.pageTitle.${segment}` }
+}
+
+/**
+ * Route auth (see `beforeEach`):
+ * - `requiresAuth`: guests are sent to `/auth?redirect=…`; expired sessions use the login modal.
+ * - `guestOnly`: `/auth`, `/demo` — signed-in users are sent to `Main` (home).
+ * - Public main-layout: `/mindmate`, `/template`, `/course`, `/askonce`, `/debateverse`, `/library`, …
+ */
+
+const routes: RouteRecordRaw[] = [
+  // ── Mobile routes (always require auth) ───────────────────────────
+  {
+    path: '/m',
+    name: 'MobileHome',
+    component: () => import('@/pages/mobile/MobileHomePage.vue'),
+    meta: { requiresAuth: true, layout: 'mobile', ...pageTitle('mindmate') },
+  },
+  {
+    path: '/m/mindmate',
+    name: 'MobileMindMate',
+    component: () => import('@/pages/mobile/MobileMindMatePage.vue'),
+    meta: { requiresAuth: true, layout: 'mobile', ...pageTitle('mindmate') },
+  },
+  {
+    path: '/m/mindgraph',
+    name: 'MobileMindGraph',
+    component: () => import('@/pages/mobile/MobileMindGraphPage.vue'),
+    meta: { requiresAuth: true, layout: 'mobile', ...pageTitle('mindgraph') },
+  },
+  {
+    path: '/m/canvas',
+    name: 'MobileCanvas',
+    component: () => import('@/pages/mobile/MobileCanvasPage.vue'),
+    meta: { requiresAuth: true, layout: 'mobile', ...pageTitle('canvas') },
+  },
+  {
+    path: '/m/account',
+    name: 'MobileAccount',
+    component: () => import('@/pages/mobile/MobileAccountPage.vue'),
+    meta: { requiresAuth: true, layout: 'mobile', ...pageTitle('account') },
+  },
+
+  // ── Desktop routes ────────────────────────────────────────────────
+  {
+    path: '/smart-response',
+    name: 'SmartResponse',
+    component: () => import('@/pages/SmartResponsePage.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      layout: 'main',
+      ...pageTitle('smartResponse'),
+    },
+  },
+  {
+    path: '/',
+    name: 'Main',
+    component: () => import('@/pages/RootHome.vue'),
+    meta: { layout: 'default', ...pageTitle('default') },
+  },
+  {
+    path: '/mindmate',
+    name: 'MindMate',
+    component: () => import('@/pages/MindMatePage.vue'),
+    meta: { layout: 'main', ...pageTitle('mindmate') },
+  },
+  {
+    path: '/mindgraph',
+    name: 'MindGraph',
+    component: () => import('@/pages/MindGraphPage.vue'),
+    meta: { requiresAuth: true, layout: 'main', ...pageTitle('mindgraph') },
+  },
+  {
+    path: '/canvas',
+    name: 'Canvas',
+    component: () => import('@/pages/CanvasPage.vue'),
+    meta: { requiresAuth: true, layout: 'canvas', ...pageTitle('canvas') },
+  },
+  {
+    path: '/admin/mindbot',
+    name: 'MindbotAdmin',
+    component: () => import('@/pages/MindbotAdminPage.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdminOrManager: true,
+      layout: 'main',
+      ...pageTitle('mindbotAdmin'),
+    },
+  },
+  {
+    path: '/admin',
+    name: 'Admin',
+    component: () => import('@/pages/AdminPage.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true, layout: 'main', ...pageTitle('admin') },
+  },
+  {
+    path: '/login',
+    redirect: (to) => ({ path: '/auth', query: to.query, hash: to.hash }),
+  },
+  {
+    path: '/auth',
+    name: 'Auth',
+    component: () => import('@/pages/AuthPage.vue'),
+    meta: {
+      layout: 'auth',
+      guestOnly: true,
+      authLayoutMinimal: true,
+      ...pageTitle('auth'),
+    },
+  },
+  {
+    path: '/demo',
+    name: 'DemoLogin',
+    component: () => import('@/pages/DemoLoginPage.vue'),
+    meta: { layout: 'auth', guestOnly: true, ...pageTitle('demoLogin') },
+  },
+  {
+    path: '/template',
+    name: 'Template',
+    component: () => import('@/pages/TemplatePage.vue'),
+    meta: { layout: 'main', ...pageTitle('template') },
+  },
+  {
+    path: '/course',
+    name: 'Course',
+    component: () => import('@/pages/CoursePage.vue'),
+    meta: { layout: 'main', ...pageTitle('course') },
+  },
+  {
+    path: '/community',
+    name: 'Community',
+    component: () => import('@/pages/CommunityPage.vue'),
+    meta: { requiresAuth: true, layout: 'main', ...pageTitle('community') },
+  },
+  {
+    path: '/school-zone',
+    name: 'SchoolZone',
+    component: () => import('@/pages/SchoolZonePage.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresOrganization: true,
+      layout: 'main',
+      ...pageTitle('schoolZone'),
+    },
+  },
+  {
+    path: '/school-dashboard',
+    name: 'SchoolDashboard',
+    component: () => import('@/pages/SchoolDashboardPage.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdminOrManager: true,
+      layout: 'main',
+      ...pageTitle('schoolDashboard'),
+    },
+  },
+  {
+    path: '/askonce',
+    name: 'AskOnce',
+    component: () => import('@/pages/AskOncePage.vue'),
+    meta: { layout: 'main', ...pageTitle('askOnce') },
+  },
+  {
+    path: '/debateverse',
+    name: 'DebateVerse',
+    component: () => import('@/pages/DebateVersePage.vue'),
+    meta: { layout: 'main', ...pageTitle('debateverse') },
+  },
+  {
+    path: '/knowledge-space',
+    name: 'KnowledgeSpace',
+    component: () => import('@/pages/KnowledgeSpacePage.vue'),
+    meta: { requiresAuth: true, layout: 'main', ...pageTitle('knowledgeSpace') },
+  },
+  {
+    path: '/chunk-test',
+    name: 'ChunkTest',
+    component: () => import('@/pages/ChunkTestPage.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresFeatureFlag: 'ragChunkTest',
+      layout: 'main',
+      ...pageTitle('chunkTest'),
+    },
+  },
+  {
+    path: '/chunk-test/results/:testId',
+    name: 'ChunkTestResults',
+    component: () => import('@/pages/ChunkTestResultsPage.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresFeatureFlag: 'ragChunkTest',
+      layout: 'main',
+      ...pageTitle('chunkTestResults'),
+    },
+  },
+  {
+    path: '/library',
+    name: 'Library',
+    component: () => import('@/pages/LibraryPage.vue'),
+    meta: { layout: 'main', ...pageTitle('library') },
+  },
+  {
+    path: '/library/:id',
+    name: 'LibraryViewer',
+    component: () => import('@/pages/LibraryViewerPage.vue'),
+    meta: { layout: 'main', ...pageTitle('libraryViewer') },
+  },
+  {
+    path: '/library/bookmark/:uuid',
+    name: 'LibraryBookmark',
+    component: () => import('@/pages/LibraryBookmarkPage.vue'),
+    meta: { layout: 'main', requiresAuth: true, ...pageTitle('libraryBookmark') },
+  },
+  {
+    path: '/gewe',
+    name: 'Gewe',
+    component: () => import('@/pages/GewePage.vue'),
+    meta: {
+      layout: 'main',
+      requiresAuth: true,
+      requiresAdmin: true,
+      ...pageTitle('gewe'),
+    },
+  },
+  {
+    path: '/teacher-usage',
+    name: 'TeacherUsage',
+    component: () => import('@/pages/TeacherUsagePage.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true, layout: 'main', ...pageTitle('teacherUsage') },
+  },
+  {
+    path: '/workshop-chat',
+    name: 'WorkshopChat',
+    component: () => import('@/pages/WorkshopChatPage.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdminOrManager: true,
+      layout: 'main',
+      ...pageTitle('workshopChat'),
+    },
+  },
+  {
+    path: '/dashboard',
+    name: 'PublicDashboard',
+    component: () => import('@/pages/PublicDashboardPage.vue'),
+    meta: { layout: 'default', ...pageTitle('publicDashboard') },
+  },
+  {
+    path: '/dashboard/login',
+    name: 'DashboardLogin',
+    component: () => import('@/pages/DashboardLoginPage.vue'),
+    meta: { layout: 'auth', ...pageTitle('dashboardLogin') },
+  },
+  {
+    path: '/export-render',
+    name: 'ExportRender',
+    component: () => import('@/pages/ExportRenderPage.vue'),
+    meta: { layout: 'canvas' },
+  },
+  {
+    path: '/:pathMatch(.*)*',
+    name: 'NotFound',
+    component: () => import('@/pages/NotFoundPage.vue'),
+    meta: { layout: 'default', ...pageTitle('notFound') },
+  },
+]
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes,
+})
+
+// Navigation guards
+router.beforeEach(async (to, _from, next) => {
+  const authStore = useAuthStore()
+  const featureFlagsStore = useFeatureFlagsStore()
+  const uiStore = useUIStore()
+  const { isMobile } = useMobileDetect()
+
+  // Landing `/`: guests → auth; signed-in → mobile home or CN MindMate / international MindGraph
+  if (to.name === 'Main') {
+    const isAuthenticated = await authStore.checkAuth()
+    if (!isAuthenticated) {
+      return next({ path: '/auth', query: to.query as Record<string, string> })
+    }
+    if (isMobile.value) {
+      return next({ path: '/m', query: to.query as Record<string, string> })
+    }
+    if (uiStore.uiVersion === 'international') {
+      return next({ name: 'MindGraph' })
+    }
+    return next({ name: 'MindMate' })
+  }
+
+  if (to.name === 'Admin' && to.query.tab === 'mindbot') {
+    const restQuery = { ...to.query }
+    delete restQuery.tab
+    return next({ path: '/admin/mindbot', query: restQuery })
+  }
+
+  // Auto-redirect mobile users to /m/* routes (skip for auth, export, dashboard pages)
+  const isMobileRoute = to.path === '/m' || to.path.startsWith('/m/')
+  const skipMobileRedirect =
+    isMobileRoute ||
+    to.path.startsWith('/login') ||
+    to.path.startsWith('/auth') ||
+    to.path.startsWith('/demo') ||
+    to.path.startsWith('/export-render') ||
+    to.path.startsWith('/dashboard') ||
+    to.path.startsWith('/admin/mindbot')
+
+  if (isMobile.value && !skipMobileRedirect) {
+    const mobileMap: Record<string, string> = {
+      '/': '/m',
+      '/mindmate': '/m',
+      '/mindgraph': '/m/mindgraph',
+      '/canvas': '/m/canvas',
+    }
+    const mobilePath = mobileMap[to.path]
+    if (mobilePath) {
+      return next({ path: mobilePath, query: to.query as Record<string, string> })
+    }
+    return next({ path: '/m' })
+  }
+
+  // Fetch feature flags if needed (for router guard - doesn't use vue-query)
+  // Fetch for: routes with feature flag checks, OR any main layout route (sidebar needs flags)
+  const needsFeatureFlags =
+    to.meta.requiresFeatureFlag ||
+    to.meta.layout === 'main' ||
+    to.name === 'Course' ||
+    to.name === 'Template' ||
+    to.name === 'Community' ||
+    to.name === 'AskOnce' ||
+    to.name === 'DebateVerse' ||
+    to.name === 'SchoolZone' ||
+    to.name === 'KnowledgeSpace' ||
+    to.name === 'Library' ||
+    to.name === 'Gewe' ||
+    to.name === 'SmartResponse' ||
+    to.name === 'TeacherUsage' ||
+    to.name === 'WorkshopChat' ||
+    to.name === 'MindbotAdmin'
+  if (needsFeatureFlags) {
+    await featureFlagsStore.fetchFlags()
+  }
+
+  // Check authentication status - only for protected routes
+  // checkAuth() is smart: it uses cached user if available, only makes API call if needed
+  if (to.meta.requiresAuth) {
+    const hadUserBeforeCheck = !!authStore.user || !!sessionStorage.getItem('auth_user')
+
+    const isAuthenticated = await authStore.checkAuth()
+    if (!isAuthenticated) {
+      if (hadUserBeforeCheck && to.name !== 'Auth') {
+        authStore.handleTokenExpired(undefined, undefined)
+        return next(false)
+      }
+      return next({ path: '/auth', query: { redirect: to.fullPath } })
+    }
+  }
+
+  // Check admin access (admin-only, not managers)
+  if (to.meta.requiresAdmin && !authStore.isAdmin) {
+    return next({ name: 'MindMate' })
+  }
+
+  // Check admin or manager access (school dashboard)
+  if (to.meta.requiresAdminOrManager && !authStore.isAdminOrManager) {
+    return next({ name: 'MindMate' })
+  }
+
+  if (to.meta.requiresWorkshopChatAccess) {
+    if (!featureFlagsStore.getFeatureWorkshopChat()) {
+      return next({ name: 'MindMate' })
+    }
+    const previewIds = featureFlagsStore.getWorkshopChatPreviewOrgIds()
+    const accessMap = featureFlagsStore.flags?.feature_org_access ?? {}
+    const workshopEntry = accessMap.feature_workshop_chat
+    if (
+      !userCanAccessWorkshopChat(
+        authStore.isAdminOrManager,
+        authStore.user?.schoolId,
+        authStore.user?.id,
+        previewIds,
+        workshopEntry
+      )
+    ) {
+      return next({ name: 'MindMate' })
+    }
+  }
+
+  // Check organization membership for school zone
+  if (to.meta.requiresOrganization && !authStore.user?.schoolId) {
+    return next({ name: 'MindMate' })
+  }
+
+  // Check feature flags
+  if (
+    to.meta.requiresFeatureFlag === 'ragChunkTest' &&
+    !featureFlagsStore.getFeatureRagChunkTest()
+  ) {
+    return next({ name: 'MindMate' })
+  }
+  if (to.name === 'Course' && !featureFlagsStore.getFeatureCourse()) {
+    return next({ name: 'MindMate' })
+  }
+  if (to.name === 'Template' && !featureFlagsStore.getFeatureTemplate()) {
+    return next({ name: 'MindMate' })
+  }
+  if (to.name === 'Community' && !featureFlagsStore.getFeatureCommunity()) {
+    return next({ name: 'MindMate' })
+  }
+  if (to.name === 'AskOnce' && !featureFlagsStore.getFeatureAskOnce()) {
+    return next({ name: 'MindMate' })
+  }
+  if (to.name === 'DebateVerse' && !featureFlagsStore.getFeatureDebateverse()) {
+    return next({ name: 'MindMate' })
+  }
+  if (to.name === 'SchoolZone' && !featureFlagsStore.getFeatureSchoolZone()) {
+    return next({ name: 'MindMate' })
+  }
+  if (to.name === 'KnowledgeSpace' && !featureFlagsStore.getFeatureKnowledgeSpace()) {
+    return next({ name: 'MindMate' })
+  }
+  if (to.name === 'Library' && !featureFlagsStore.getFeatureLibrary()) {
+    return next({ name: 'MindMate' })
+  }
+  if (to.name === 'Gewe' && !featureFlagsStore.getFeatureGewe()) {
+    return next({ name: 'MindMate' })
+  }
+  if (to.name === 'SmartResponse' && !featureFlagsStore.getFeatureSmartResponse()) {
+    return next({ name: 'MindMate' })
+  }
+  if (to.name === 'TeacherUsage' && !featureFlagsStore.getFeatureTeacherUsage()) {
+    return next({ name: 'MindMate' })
+  }
+  if (to.name === 'MindbotAdmin') {
+    if (!featureFlagsStore.getFeatureMindbot()) {
+      return next({ name: 'MindMate' })
+    }
+    const accessMap = featureFlagsStore.flags?.feature_org_access ?? {}
+    const mindbotEntry = accessMap.feature_mindbot
+    if (
+      !userCanAccessMindbotAdmin(
+        authStore.isAdmin,
+        authStore.isManager,
+        authStore.user?.schoolId,
+        authStore.user?.id,
+        mindbotEntry
+      )
+    ) {
+      return next({ name: 'MindMate' })
+    }
+  }
+  // Guest-only routes (/auth, /demo; /login redirects to /auth): confirm session, then send signed-in users home
+  if (to.meta.guestOnly) {
+    const isAuthenticated = await authStore.checkAuth()
+    if (isAuthenticated) {
+      return next({ name: 'Main' })
+    }
+  }
+
+  next()
+})
+
+export default router

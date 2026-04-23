@@ -1,0 +1,47 @@
+/** uz UI — notification */
+export default {
+  'notification.cannotClearTopicOrCenter': 'Mavzu yoki markaz tugunlarini tozalab boʻlmaydi',
+  'notification.cannotResetSelectDiagramType':
+    'Qayta tiklab boʻlmaydi: avval diagramma turini tanlang',
+  'notification.canvasClearNodes': '{count} tugun tozalandi',
+  'notification.canvasClearNodesLearning': '{count} tugun boʻshatildi, javoblarga qoʻshildi',
+  'notification.canvasSomeoneEditingNode': 'Boshqa foydalanuvchi bu tugunni tahrirlayapti',
+  'notification.collabDeleteBlocked':
+    'Boshqa foydalanuvchi tanlangan tugunni tahrirlaganda oʻchirib boʻlmaydi',
+  'notification.collabRedoBlocked': 'Boshqa foydalanuvchi tahrirlaganda qayta bajarib boʻlmaydi',
+  'notification.collabUndoBlocked': 'Boshqa foydalanuvchi tahrirlaganda bekor qilib boʻlmaydi',
+  'notification.conversationDeleted': 'Suhbat oʻchirildi',
+  'notification.copied': 'Vaqtinchalik xotiraga nusxa olindi',
+  'notification.copyFailed': 'Nusxa olish muvaffaqiyatsiz',
+  'notification.deleteFailed': 'Oʻchirish muvaffaqiyatsiz',
+  'notification.deleted': 'Element muvaffaqiyatli oʻchirildi',
+  'notification.feedbackCancelled': 'Fikr olib tashlandi',
+  'notification.feedbackThanks': 'Fikringiz uchun rahmat',
+  'notification.feedbackThanksDislike': 'Fikringiz uchun rahmat — yaxshilaymiz',
+  'notification.focusQuestionTooShort': 'Avval uzoqroq fokus savolini kiriting',
+  'notification.fullscreenFailed': 'Toʻliq ekranga oʻtib boʻlmadi',
+  'notification.generationCancelled': 'Generatsiya bekor qilindi',
+  'notification.historyClearNodes': 'Tugun matnini tozalash',
+  'notification.historyEmptyLearning': 'Tugunni boʻshatish va javob qoʻshish',
+  'notification.importInvalidData': 'Import muvaffaqiyatsiz: notoʻgʻri diagramma maʼlumotlari',
+  'notification.importLoadFailed': 'Import muvaffaqiyatsiz: diagramma yuklanmadi',
+  'notification.importSavePartial': 'Import qilindi, lekin kutubxonaga saqlash muvaffaqiyatsiz',
+  'notification.importSlotsFull':
+    'Kutubxona toʻliq; diagramma import qilindi lekin kutubxonaga saqlanmadi',
+  'notification.importSuccess': 'Diagramma import qilindi va kutubxonaga saqlandi',
+  'notification.importUnsupportedType':
+    'Import muvaffaqiyatsiz: qoʻllab-quvvatlanmaydigan diagramma turi',
+  'notification.loadMoreFailed': 'Yana yuklab boʻlmadi',
+  'notification.networkError': 'Tarmoq xatosi',
+  'notification.newVersionAvailable': 'Yangi versiya mavjud. Yangilash uchun bosing.',
+  'notification.recommendationFailed': 'Tavsiya muvaffaqiyatsiz: {msg}',
+  'notification.relationshipGenerationFailed': 'Munosabatlarni generatsiya qilish muvaffaqiyatsiz',
+  'notification.resetDefaultTemplate': 'Standart shablonga qaytarish',
+  'notification.rootConceptLinkNotFound': 'Ildiz tushuncha havolasi topilmadi',
+  'notification.saved': 'Oʻzgarishlar saqlandi',
+  'notification.selectNodeToClear': 'Tozalash uchun tugunni tanlang',
+  'notification.sessionInvalidated':
+    'Jihozlar soni chegarasidan oshib ketganingiz uchun tizimdan chiqarildingiz',
+  'notification.signInToUse': 'Foydalanish uchun kiring',
+  'notification.signInToValidateFocus': 'Fokus savolini tekshirish uchun kiring',
+} as const

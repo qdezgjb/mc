@@ -1,0 +1,506 @@
+/**
+ * MindGraph Global Styles
+ */
+
+@import 'katex/dist/katex.min.css';
+
+@import 'tailwindcss/theme' layer(theme);
+@import 'tailwindcss/utilities' layer(utilities);
+
+/* Tailwind 4 Theme Configuration (migrated from tailwind.config.js) */
+@theme {
+  /* Primary color palette */
+  --color-primary-50: #ecf5ff;
+  --color-primary-100: #d9ecff;
+  --color-primary-200: #b3d8ff;
+  --color-primary-300: #8cc5ff;
+  --color-primary-400: #66b1ff;
+  --color-primary-500: #409eff;
+  --color-primary-600: #337ecc;
+  --color-primary-700: #265f99;
+  --color-primary-800: #1a3f66;
+  --color-primary-900: #0d2033;
+  --color-primary: #409eff;
+  --color-primary-light: #66b1ff;
+  --color-primary-dark: #337ecc;
+
+  /* Semantic colors */
+  --color-success: #67c23a;
+  --color-warning: #e6a23c;
+  --color-danger: #f56c6c;
+  --color-info: #909399;
+
+  /* Font family */
+  --font-sans: 'Inter', system-ui, sans-serif;
+}
+
+/* Custom CSS Variables */
+:root {
+  --mg-header-height: 56px;
+  --mg-sidebar-width: 240px;
+  --mg-panel-width: 320px;
+  --mg-toolbar-height: 48px;
+
+  /* Colors */
+  --mg-primary: #409eff;
+  --mg-primary-light: #66b1ff;
+  --mg-primary-dark: #337ecc;
+  --mg-success: #67c23a;
+  --mg-warning: #e6a23c;
+  --mg-danger: #f56c6c;
+  --mg-info: #909399;
+
+  /* Background */
+  --mg-bg-primary: #ffffff;
+  --mg-bg-secondary: #f5f7fa;
+  --mg-bg-tertiary: #e4e7ed;
+
+  /* Text */
+  --mg-text-primary: #303133;
+  --mg-text-regular: #606266;
+  --mg-text-secondary: #909399;
+  --mg-text-placeholder: #c0c4cc;
+
+  /* Border */
+  --mg-border-color: #dcdfe6;
+  --mg-border-light: #e4e7ed;
+
+  /* Shadow */
+  --mg-shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.05);
+  --mg-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --mg-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+/* Dark mode variables */
+.dark {
+  --mg-bg-primary: #1a1a2e;
+  --mg-bg-secondary: #16213e;
+  --mg-bg-tertiary: #0f3460;
+
+  --mg-text-primary: #e4e7ed;
+  --mg-text-regular: #c0c4cc;
+  --mg-text-secondary: #909399;
+  --mg-text-placeholder: #606266;
+
+  --mg-border-color: #4a4a5e;
+  --mg-border-light: #3a3a4e;
+
+  --mg-shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.2);
+  --mg-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --mg-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+/* Base styles */
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-color: var(--mg-bg-secondary);
+  color: var(--mg-text-primary);
+  line-height: 1.5;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--mg-bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--mg-border-color);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--mg-text-secondary);
+}
+
+/* RTL: mirror directional icons (back, carousel prev/next, inline-rec paging) */
+[dir='rtl'] .mg-icon-flip-rtl {
+  transform: scaleX(-1);
+}
+
+/* Focus styles */
+:focus-visible {
+  outline: 2px solid var(--mg-primary);
+  outline-offset: 2px;
+}
+
+/* Selection */
+::selection {
+  background: var(--mg-primary);
+  color: white;
+}
+
+/* Element Plus overrides for dark mode */
+.dark .el-button--default {
+  background-color: var(--mg-bg-tertiary);
+  border-color: var(--mg-border-color);
+  color: var(--mg-text-primary);
+}
+
+.dark .el-input__wrapper {
+  background-color: var(--mg-bg-tertiary);
+}
+
+.dark .el-card {
+  background-color: var(--mg-bg-primary);
+  border-color: var(--mg-border-color);
+}
+
+.dark .el-dropdown-menu {
+  background-color: var(--mg-bg-primary);
+  border-color: var(--mg-border-color);
+}
+
+.dark .el-dropdown-menu__item {
+  color: var(--mg-text-primary);
+}
+
+.dark .el-dropdown-menu__item:hover {
+  background-color: var(--mg-bg-tertiary);
+}
+
+/* Utility classes */
+.text-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.no-select {
+  user-select: none;
+}
+
+.cursor-grab {
+  cursor: grab;
+}
+
+.cursor-grabbing {
+  cursor: grabbing;
+}
+
+/* Hide scrollbar utility */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* MindGraph slot editing styles */
+[data-placeholder]:empty:before {
+  content: attr(data-placeholder);
+  color: #9ca3af;
+  pointer-events: none;
+}
+
+[data-slot]:focus,
+#mindgraph-free-input:focus {
+  outline: 2px solid #60a5fa;
+  outline-offset: 1px;
+  color: #000 !important;
+}
+
+#mindgraph-free-input:empty:before {
+  content: attr(data-placeholder);
+  color: #9ca3af;
+  pointer-events: none;
+}
+
+/* Animation for typing indicator */
+@keyframes bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.animate-bounce {
+  animation: bounce 0.6s infinite;
+}
+
+/* Dark theme for Element Plus messages */
+.dark-message.el-message {
+  --el-message-bg-color: #1c1c1e;
+  --el-message-border-color: #2c2c2e;
+  --el-message-text-color: #f5f5f7;
+  background-color: #1c1c1e;
+  border-color: #3a3a3c;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.dark-message.el-message .el-message__content {
+  color: #f5f5f7;
+  font-weight: 500;
+}
+
+.dark-message.el-message--success {
+  --el-message-bg-color: #1c2e1c;
+  background-color: #1a2e1a;
+  border-color: #2d5a2d;
+}
+
+.dark-message.el-message--success .el-message__icon {
+  color: #4ade80;
+}
+
+.dark-message.el-message--error {
+  --el-message-bg-color: #2e1c1c;
+  background-color: #2e1a1a;
+  border-color: #5a2d2d;
+}
+
+.dark-message.el-message--error .el-message__icon {
+  color: #f87171;
+}
+
+.dark-message.el-message--warning {
+  --el-message-bg-color: #2e2a1c;
+  background-color: #2e2a1a;
+  border-color: #5a4d2d;
+}
+
+.dark-message.el-message--warning .el-message__icon {
+  color: #fbbf24;
+}
+
+.dark-message.el-message--info {
+  --el-message-bg-color: #1c2a2e;
+  background-color: #1a2a2e;
+  border-color: #2d4d5a;
+}
+
+.dark-message.el-message--info .el-message__icon {
+  color: #60a5fa;
+}
+
+.dark-message.el-message .el-message__closeBtn {
+  color: #a1a1aa;
+}
+
+.dark-message.el-message .el-message__closeBtn:hover {
+  color: #f5f5f7;
+}
+
+/* Dark theme for Element Plus alert-style notifications */
+.dark-alert-notification.el-notification {
+  background-color: #1c1c1e;
+  border: 1px solid #3a3a3c;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  padding: 16px 20px;
+}
+
+.dark-alert-notification.el-notification .el-notification__title {
+  color: #f5f5f7;
+  font-weight: 600;
+}
+
+.dark-alert-notification.el-notification .el-notification__content {
+  color: #e5e5e7;
+  font-weight: 500;
+  margin-top: 0;
+}
+
+.dark-alert-notification.el-notification .el-notification__closeBtn {
+  color: #a1a1aa;
+  /* EP defaults to `right`; use inline-end so close mirrors in RTL (top-left stack). */
+  right: auto;
+  inset-inline-end: 15px;
+  top: 18px;
+}
+
+.dark-alert-notification.el-notification .el-notification__closeBtn:hover {
+  color: #f5f5f7;
+}
+
+/* Success variant */
+.dark-alert-notification.el-notification--success {
+  background-color: #1a2e1a;
+  border-color: #2d5a2d;
+}
+
+.dark-alert-notification.el-notification--success .el-notification__icon {
+  color: #4ade80;
+}
+
+/* Error variant */
+.dark-alert-notification.el-notification--error {
+  background-color: #2e1a1a;
+  border-color: #5a2d2d;
+}
+
+.dark-alert-notification.el-notification--error .el-notification__icon {
+  color: #f87171;
+}
+
+/* Warning variant */
+.dark-alert-notification.el-notification--warning {
+  background-color: #2e2a1a;
+  border-color: #5a4d2d;
+}
+
+.dark-alert-notification.el-notification--warning .el-notification__icon {
+  color: #fbbf24;
+}
+
+/* Info variant */
+.dark-alert-notification.el-notification--info {
+  background-color: #1a2a2e;
+  border-color: #2d4d5a;
+}
+
+.dark-alert-notification.el-notification--info .el-notification__icon {
+  color: #60a5fa;
+}
+
+/*
+ * Element Plus dialog / message-box: header close uses physical `right: 0`.
+ * Use inline-end so the × sits on the trailing edge in RTL (physical left), matching notifications.
+ * `show-close` padding uses `padding-right` in EP — switch to `padding-inline-end` so the title
+ * clears the close on the correct side in both directions.
+ */
+.el-dialog__headerbtn {
+  right: auto;
+  inset-inline-end: 0;
+}
+
+.el-dialog__header.show-close {
+  padding-right: 0;
+  padding-inline-end: calc(
+    var(--el-dialog-padding-primary, 16px) + var(--el-message-close-size, 16px)
+  );
+}
+
+.el-message-box__headerbtn {
+  right: auto;
+  inset-inline-end: 0;
+}
+
+.el-message-box__header.show-close {
+  padding-right: 0;
+  padding-inline-end: calc(
+    var(--el-messagebox-padding-primary, 12px) + var(--el-message-close-size, 16px)
+  );
+}
+
+/* Diagram node labels: compact markdown + KaTeX inside Vue Flow nodes */
+.diagram-node-md {
+  font-size: inherit;
+  line-height: 1.35;
+  word-break: normal;
+  overflow-wrap: break-word;
+  line-break: auto;
+}
+
+/*
+ * When KaTeX is present, switch to inline-flex so the container's height
+ * matches its content exactly.  As an inline-block BFC, trailing whitespace
+ * from markdown-it output (e.g. "\n" after </p>) becomes visible anonymous
+ * blocks when white-space:pre-wrap is inherited from .inline-edit-display--wrap,
+ * bloating .diagram-node-md well beyond the <p> height.  In flex layout,
+ * whitespace-only anonymous flex items are removed per CSS spec, eliminating
+ * the height bloat and letting the parent flex containers center the formula.
+ */
+.diagram-node-md:has(.katex) {
+  display: inline-flex;
+  flex-direction: column;
+}
+
+/*
+ * KaTeX sets vertical-align: -<depth>em on .katex-html (inline style) and on internal
+ * .strut elements.  These shifts extend the line box asymmetrically downward, which
+ * makes formulas appear off-center inside flex-aligned diagram nodes (items-center).
+ *
+ * Making .katex an inline-flex container turns .katex-html into a flex item, where
+ * vertical-align is ignored.  align-items:center then symmetrically centers the
+ * rendered formula, and the outer vertical-align:middle keeps the box aligned with
+ * surrounding text.
+ */
+.diagram-node-md .katex {
+  vertical-align: middle;
+  display: inline-flex;
+  align-items: center;
+}
+
+.diagram-node-md :first-child {
+  margin-top: 0;
+}
+
+.diagram-node-md :last-child {
+  margin-bottom: 0;
+}
+
+/* Zero vertical margins so flex `items-center` on the node isn’t fighting CommonMark `<p>` bands */
+.diagram-node-md p {
+  margin: 0;
+}
+
+/*
+ * When a <p> contains KaTeX, the inline formatting context creates line-box
+ * height bloat: the strut + vertical-align:middle positioning makes the <p>
+ * ~2x taller than the formula, with the formula pinned to the top.
+ *
+ * Switching to flex eliminates the line-box model entirely.  The .katex
+ * element becomes a flex item centered by align-items:center, and the <p>
+ * shrinks to exactly the formula height.
+ */
+.diagram-node-md p:has(.katex) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.diagram-node-md ul,
+.diagram-node-md ol {
+  margin: 0.2em 0;
+  padding-left: 1.1em;
+}
+
+.diagram-node-md h1,
+.diagram-node-md h2,
+.diagram-node-md h3,
+.diagram-node-md h4 {
+  margin: 0.15em 0;
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.diagram-node-md pre {
+  margin: 0.25em 0;
+  padding: 0.25em 0.35em;
+  font-size: 0.85em;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.diagram-node-md .katex-display {
+  margin: 0.15em 0;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+/*
+ * MathLive portals the virtual keyboard to <body>. Element Plus dialog overlays use z-index ~2000+,
+ * so the keyboard would sit underneath and clicks hit the overlay instead.
+ */
+body {
+  --keyboard-zindex: 10000;
+}

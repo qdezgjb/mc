@@ -1,0 +1,86 @@
+"""MindBot error codes and HTTP mapping for DingTalk callbacks and admin routes."""
+
+from __future__ import annotations
+
+from enum import Enum
+from typing import Optional
+
+# Codes that are safe for the caller to retry without side-effects.
+# Permanent failures (signature mismatch, feature disabled, empty message, etc.)
+# must NOT be retried — they indicate a logic/config problem, not a transient error.
+_RETRYABLE_CODES = frozenset(
+    {
+        "MINDBOT_DIFY_FAILED",
+        "MINDBOT_SESSION_WEBHOOK_FAILED",
+        "MINDBOT_DINGTALK_TOKEN_FAILED",
+        "MINDBOT_DINGTALK_OPENAPI_REPLY_FAILED",
+        "MINDBOT_REDIS_UNAVAILABLE_FOR_DEDUP",
+        "MINDBOT_CIRCUIT_OPEN",
+        "MINDBOT_PIPELINE_INTERNAL_ERROR",
+        "MINDBOT_ORG_CONCURRENCY_LIMIT",
+    }
+)
+
+
+class MindbotErrorCode(str, Enum):
+    """Stable string codes for logs, optional response headers, and API JSON."""
+
+    OK = "MINDBOT_OK"
+    ACCEPTED = "MINDBOT_ACCEPTED"
+    PIPELINE_INTERNAL_ERROR = "MINDBOT_PIPELINE_INTERNAL_ERROR"
+    FEATURE_DISABLED = "MINDBOT_FEATURE_DISABLED"
+    INVALID_JSON = "MINDBOT_INVALID_JSON"
+    INVALID_BODY = "MINDBOT_INVALID_BODY"
+    MISSING_ROBOT_CODE = "MINDBOT_MISSING_ROBOT_CODE"
+    PATH_CALLBACK_REQUIRED = "MINDBOT_PATH_CALLBACK_REQUIRED"
+    CONFIG_NOT_FOUND = "MINDBOT_CONFIG_NOT_FOUND"
+    INVALID_SIGNATURE = "MINDBOT_INVALID_SIGNATURE"
+    ROBOT_CODE_MISMATCH = "MINDBOT_ROBOT_CODE_MISMATCH"
+    DUPLICATE_MESSAGE = "MINDBOT_DUPLICATE_MESSAGE"
+    REDIS_UNAVAILABLE_FOR_DEDUP = "MINDBOT_REDIS_UNAVAILABLE_FOR_DEDUP"
+    RATE_LIMITED = "MINDBOT_RATE_LIMITED"
+    CIRCUIT_OPEN = "MINDBOT_CIRCUIT_OPEN"
+    EMPTY_USER_MESSAGE = "MINDBOT_EMPTY_USER_MESSAGE"
+    DIFY_FAILED = "MINDBOT_DIFY_FAILED"
+    MISSING_SESSION_WEBHOOK = "MINDBOT_MISSING_SESSION_WEBHOOK"
+    SESSION_WEBHOOK_FAILED = "MINDBOT_SESSION_WEBHOOK_FAILED"
+    SESSION_WEBHOOK_INVALID_URL = "MINDBOT_SESSION_WEBHOOK_INVALID_URL"
+    DINGTALK_TOKEN_FAILED = "MINDBOT_DINGTALK_TOKEN_FAILED"
+    DINGTALK_OPENAPI_REPLY_FAILED = "MINDBOT_DINGTALK_OPENAPI_REPLY_FAILED"
+    ADMIN_CONFIG_NOT_FOUND = "MINDBOT_ADMIN_CONFIG_NOT_FOUND"
+    ADMIN_ORGANIZATION_NOT_FOUND = "MINDBOT_ADMIN_ORGANIZATION_NOT_FOUND"
+    ADMIN_ROBOT_CODE_CONFLICT = "MINDBOT_ADMIN_ROBOT_CODE_CONFLICT"
+    ADMIN_SECRETS_REQUIRED = "MINDBOT_ADMIN_SECRETS_REQUIRED"
+    EVENT_PLATFORM_NOT_CONFIGURED = "MINDBOT_EVENT_PLATFORM_NOT_CONFIGURED"
+    EVENT_PLATFORM_DECRYPT_FAILED = "MINDBOT_EVENT_PLATFORM_DECRYPT_FAILED"
+    EVENT_USE_PER_ORG_URL = "MINDBOT_EVENT_USE_PER_ORG_URL"
+    ORG_CONCURRENCY_LIMIT = "MINDBOT_ORG_CONCURRENCY_LIMIT"
+    ORG_LOCKED = "MINDBOT_ORG_LOCKED"
+
+    @property
+    def retryable(self) -> bool:
+        """True when a transient failure makes it safe for the caller to retry.
+
+        Permanent failures (bad signature, feature disabled, duplicate message,
+        rate limit, config not found, empty message) must NOT be retried because
+        the same response will be returned on every attempt and retrying only
+        amplifies load. Transient failures (Dify unreachable, outbound network
+        errors, Redis dedup unavailable, circuit open) can be retried after a
+        suitable back-off once the underlying issue is resolved.
+        """
+        return self.value in _RETRYABLE_CODES
+
+
+def mindbot_error_headers(
+    code: MindbotErrorCode,
+    *,
+    organization_id: Optional[int] = None,
+    robot_code: Optional[str] = None,
+) -> dict[str, str]:
+    """Headers attached to DingTalk callback HTTP responses for observability."""
+    result: dict[str, str] = {"X-MindBot-Error-Code": code.value}
+    if organization_id is not None:
+        result["X-MindBot-Organization-Id"] = str(int(organization_id))
+    if robot_code and isinstance(robot_code, str) and robot_code.strip():
+        result["X-MindBot-Robot-Code"] = robot_code.strip()
+    return result

@@ -1,0 +1,326 @@
+/**
+ * Vue Flow Type Definitions for MindGraph
+ * Maps diagram types to Vue Flow node/edge structures
+ */
+import type { Edge, Node, NodeProps } from '@vue-flow/core'
+
+import type { Connection, DiagramNode, DiagramType, NodeStyle } from './diagram'
+
+// Custom node types for different diagram components
+export type MindGraphNodeType =
+  | 'topic' // Central topic node (non-draggable)
+  | 'concept' // Concept map concept node (with link icon)
+  | 'bubble' // Circular attribute node
+  | 'branch' // Mind map branch node
+  | 'leaf' // Tree map leaf node (child of category)
+  | 'flow' // Flow map step node
+  | 'flowSubstep' // Flow map substep node
+  | 'brace' // Brace map part node
+  | 'bridge' // Bridge map pair node
+  | 'tree' // Tree map category node
+  | 'circle' // Circle map context node
+  | 'boundary' // Circle map outer boundary ring (non-interactive)
+  | 'label' // Classification dimension label
+
+// Custom edge types
+export type MindGraphEdgeType =
+  | 'curved' // For mind maps
+  | 'straight' // For flow maps
+  | 'step' // For tree maps (T/L shaped orthogonal connectors, vertical-first)
+  | 'horizontalStep' // For flow map substeps (T/L shaped, horizontal-first)
+  | 'tree' // For tree maps (straight vertical lines, no arrowhead)
+  | 'radial' // For bubble maps (center-to-center)
+  | 'brace' // For brace maps (bracket shape)
+  | 'bridge' // For bridge maps (analogy connection)
+
+// Node data structure for Vue Flow
+export interface MindGraphNodeData {
+  label: string
+  nodeType: MindGraphNodeType
+  diagramType: DiagramType
+  style?: NodeStyle
+  parentId?: string
+  isDraggable?: boolean
+  isSelectable?: boolean
+  originalNode?: DiagramNode
+  // Additional properties for specific diagram types
+  stepNumber?: number // For flow maps
+  pairIndex?: number // For bridge maps
+  position?: 'top' | 'bottom' // For bridge maps
+  /** Concept map: unified arrowhead state. Cycle: none → clicked-side → other-side → both → none */
+  arrowheadDirection?: 'none' | 'source' | 'target' | 'both'
+  /** Concept map: when multiple edges share target handle, only one draws arrowhead */
+  drawTargetArrowhead?: boolean
+  /** Concept map: when multiple edges share source handle, only one draws arrowhead */
+  drawSourceArrowhead?: boolean
+  /** Learning sheet: node is knocked out, show placeholder */
+  hidden?: boolean
+  /** Learning sheet: original text (answer) for knocked-out node */
+  hiddenAnswer?: string
+  // Allow additional custom properties
+  [key: string]: unknown
+}
+
+// Vue Flow node with MindGraph data
+// Extends Node with selected: Vue Flow's GraphNode adds this for selection state
+export type MindGraphNode = Node<MindGraphNodeData> & { selected?: boolean }
+
+// Edge data structure for Vue Flow
+export interface MindGraphEdgeData {
+  label?: string
+  edgeType: MindGraphEdgeType
+  style?: {
+    strokeColor?: string
+    strokeWidth?: number
+    strokeDasharray?: string
+  }
+  // Additional properties for specific diagram types
+  animated?: boolean // For flow maps
+  isRelation?: boolean // For bridge maps
+  isBridge?: boolean // For bridge maps
+  // Allow additional custom properties
+  [key: string]: unknown
+}
+
+// Vue Flow edge with MindGraph data
+// Extends base Edge with sourcePosition and targetPosition for tree maps
+export type MindGraphEdge = Edge<MindGraphEdgeData> & {
+  sourcePosition?: 'top' | 'bottom' | 'left' | 'right'
+  targetPosition?: 'top' | 'bottom' | 'left' | 'right'
+}
+
+// Props for custom node components
+export type MindGraphNodeProps = NodeProps<MindGraphNodeData>
+
+// Converter functions
+export function diagramNodeToVueFlowNode(
+  node: DiagramNode,
+  diagramType: DiagramType,
+  position?: { x: number; y: number }
+): MindGraphNode {
+  // For circle maps and bubble maps, use 'circle' type for topic nodes (perfect circles)
+  const isCircleMap = diagramType === 'circle_map'
+  const isBubbleMap = diagramType === 'bubble_map'
+  const isDoubleBubbleMap = diagramType === 'double_bubble_map'
+  const useCircleForTopic = isCircleMap || isBubbleMap || isDoubleBubbleMap
+
+  const isConceptMap = diagramType === 'concept_map'
+  const nodeTypeMap: Record<string, MindGraphNodeType> = {
+    topic: isConceptMap ? 'concept' : useCircleForTopic ? 'circle' : 'topic',
+    center: isConceptMap ? 'concept' : useCircleForTopic ? 'circle' : 'topic',
+    child: 'branch',
+    bubble: isCircleMap || isBubbleMap || isDoubleBubbleMap ? 'circle' : 'bubble', // bubble_map and double_bubble_map use CircleNode
+    branch: isConceptMap ? 'concept' : 'branch', // concept_map uses ConceptNode for concept nodes
+    left: 'branch',
+    right: 'branch',
+    boundary: 'boundary',
+    flow: 'flow',
+    flowSubstep: 'flowSubstep', // Substep nodes for flow maps
+    brace: 'brace',
+    label: 'label', // Classification dimension label for tree_map and brace_map
+  }
+
+  const mappedType = nodeTypeMap[node.type] || 'branch'
+  // Topic, center, and boundary nodes are not draggable (except concept_map topic)
+  const isDraggable =
+    isConceptMap && node.type === 'topic'
+      ? true
+      : !['topic', 'center', 'boundary'].includes(node.type)
+  // Boundary nodes are not selectable
+  const isSelectable = node.type !== 'boundary'
+
+  // Determine nodeType for data (used by CircleNode/ConceptNode to differentiate topic vs context)
+  let dataNodeType: MindGraphNodeType = mappedType
+  if (useCircleForTopic && (node.type === 'topic' || node.type === 'center')) {
+    dataNodeType = 'topic' // Keep 'topic' in data for CircleNode styling
+  }
+  if (isConceptMap && (node.type === 'topic' || node.type === 'center')) {
+    dataNodeType = 'topic' // Keep 'topic' in data for ConceptNode topic styling
+  }
+
+  // Boundary nodes should render behind other nodes
+  const zIndex = node.type === 'boundary' ? -1 : undefined
+
+  // For boundary nodes, set width/height on the node object directly
+  // For double_bubble_map capsule nodes (similarity/diff), use style width/height
+  // For tree_map branch nodes, use style width for center-aligned vertical groups
+  const isTreeMapBranch =
+    diagramType === 'tree_map' && (node.type === 'branch' || node.type === 'child')
+  // For tree_map topic pill, measured width/height so long text stays inside the node
+  const isTreeMapTopic =
+    diagramType === 'tree_map' && node.type === 'topic' && node.style?.width != null
+  const nodeWidth =
+    node.type === 'boundary'
+      ? node.style?.width
+      : isDoubleBubbleMap && node.style?.width != null
+        ? node.style.width
+        : isTreeMapBranch && node.style?.width != null
+          ? node.style.width
+          : isTreeMapTopic
+            ? node.style?.width
+            : undefined
+  const nodeHeight =
+    node.type === 'boundary'
+      ? node.style?.height
+      : isDoubleBubbleMap && node.style?.height != null
+        ? node.style.height
+        : isTreeMapTopic && node.style?.height != null
+          ? node.style.height
+          : undefined
+
+  // Preserve custom data fields from node.data (like pairIndex, position for bridge maps)
+  const customData = node.data || {}
+
+  return {
+    id: node.id,
+    type: mappedType,
+    position: position || node.position || { x: 0, y: 0 },
+    zIndex,
+    width: nodeWidth,
+    height: nodeHeight,
+    data: {
+      label: node.text,
+      nodeType: dataNodeType,
+      diagramType,
+      style: node.style,
+      parentId: node.parentId,
+      isDraggable,
+      isSelectable,
+      originalNode: node,
+      // Preserve custom fields from node.data (e.g., pairIndex, position for bridge maps)
+      ...customData,
+    },
+    draggable: isDraggable,
+    selectable: isSelectable,
+  }
+}
+
+export function connectionToVueFlowEdge(
+  connection: Connection,
+  edgeType: MindGraphEdgeType = 'curved'
+): MindGraphEdge {
+  return {
+    id: connection.id,
+    source: connection.source,
+    target: connection.target,
+    type: edgeType,
+    label: connection.label,
+    // Map position strings to Vue Flow position format
+    sourcePosition: connection.sourcePosition as 'top' | 'bottom' | 'left' | 'right' | undefined,
+    targetPosition: connection.targetPosition as 'top' | 'bottom' | 'left' | 'right' | undefined,
+    // Pass through specific handle IDs if provided
+    sourceHandle: connection.sourceHandle,
+    targetHandle: connection.targetHandle,
+    data: {
+      label: connection.label,
+      edgeType,
+      style: connection.style,
+      arrowheadDirection: connection.arrowheadDirection,
+    },
+  }
+}
+
+export function vueFlowNodeToDiagramNode(node: MindGraphNode): DiagramNode {
+  const typeMap: Record<string, string> = {
+    topic: 'topic',
+    concept: 'branch',
+    bubble: 'bubble',
+    branch: 'child',
+    leaf: 'branch',
+    flow: 'flow',
+    flowSubstep: 'flowSubstep',
+    brace: 'brace',
+    boundary: 'boundary',
+    bridge: 'branch',
+    tree: 'branch',
+    circle: 'bubble',
+    label: 'label',
+  }
+
+  const data = node.data
+  const nodeType = data?.nodeType ?? 'branch'
+
+  const excludeKeys = new Set([
+    'label',
+    'nodeType',
+    'diagramType',
+    'style',
+    'parentId',
+    'originalNode',
+    'isDraggable',
+    'isSelectable',
+  ])
+  const customData: Record<string, unknown> = {}
+  if (data && typeof data === 'object') {
+    for (const [k, v] of Object.entries(data)) {
+      if (!excludeKeys.has(k) && v !== undefined) {
+        customData[k] = v
+      }
+    }
+  }
+  // Preserve tree map fields (nodeType, groupIndex) so they survive sync/save
+  if (data?.diagramType === 'tree_map') {
+    if (data.nodeType === 'branch' || data.nodeType === 'leaf') {
+      customData.nodeType = data.nodeType
+    }
+    if (typeof data.groupIndex === 'number') {
+      customData.groupIndex = data.groupIndex
+    }
+  }
+
+  let diagramNodeType = typeMap[nodeType] ?? typeMap.branch
+  if (data?.diagramType === 'tree_map') {
+    diagramNodeType = 'branch'
+  }
+
+  return {
+    id: node.id,
+    text: data?.label ?? '',
+    type: diagramNodeType as DiagramNode['type'],
+    position: { x: node.position.x, y: node.position.y },
+    style: data?.style,
+    parentId: data?.parentId,
+    data: Object.keys(customData).length > 0 ? customData : undefined,
+  }
+}
+
+// Layout configuration for different diagram types
+export interface DiagramLayoutConfig {
+  type: DiagramType
+  centerX: number
+  centerY: number
+  nodeSpacing: number
+  levelSpacing: number
+}
+
+// Default layout configurations
+export const DEFAULT_LAYOUT_CONFIGS: Partial<Record<DiagramType, Partial<DiagramLayoutConfig>>> = {
+  bubble_map: {
+    nodeSpacing: 120,
+    levelSpacing: 80,
+  },
+  circle_map: {
+    nodeSpacing: 100,
+    levelSpacing: 60,
+  },
+  mindmap: {
+    nodeSpacing: 80,
+    levelSpacing: 180,
+  },
+  tree_map: {
+    nodeSpacing: 60,
+    levelSpacing: 100,
+  },
+  flow_map: {
+    nodeSpacing: 200,
+    levelSpacing: 80,
+  },
+  brace_map: {
+    nodeSpacing: 60,
+    levelSpacing: 200,
+  },
+  bridge_map: {
+    nodeSpacing: 150,
+    levelSpacing: 100,
+  },
+}
