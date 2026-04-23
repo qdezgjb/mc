@@ -42,6 +42,13 @@ import {
 } from './stageHelpers'
 import { streamNodePaletteBatch } from './streamNodePaletteBatch'
 
+function safeRandomId(): string {
+  if (typeof crypto !== 'undefined' && typeof (crypto as Crypto).randomUUID === 'function') {
+    return (crypto as Crypto).randomUUID()
+  }
+  return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`
+}
+
 export interface UseNodePaletteOptions {
   onError?: (error: string) => void
   /** When true, clears singleton on unmount (used by getNodePalette) */
@@ -367,7 +374,7 @@ export function useNodePalette(options: UseNodePaletteOptions = {}) {
           return false
         }
         const newTabs = resolvedDomains.map((name: string) => ({
-          id: `domain_${crypto.randomUUID()}`,
+          id: `domain_${safeRandomId()}`,
           name,
         }))
         panelsStore.updateNodePalette({
@@ -474,7 +481,7 @@ export function useNodePalette(options: UseNodePaletteOptions = {}) {
         errorMessage.value = t('nodePalette.error.couldNotAddBranch')
         return false
       }
-      const newTab = { id: `domain_${crypto.randomUUID()}`, name: firstDomainName }
+      const newTab = { id: `domain_${safeRandomId()}`, name: firstDomainName }
       const tabs = [...(panelsStore.nodePalettePanel.conceptMapTabs ?? []), newTab]
       panelsStore.updateNodePalette({ conceptMapTabs: tabs, mode: newTab.id })
       const sharedIds = new Set(panelsStore.nodePalettePanel.suggestions.map((s) => s.id))
