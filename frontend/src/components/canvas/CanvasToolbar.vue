@@ -2,7 +2,7 @@
 /**
  * CanvasToolbar - Floating toolbar for canvas editing
  */
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 
 import { ElButton, ElTooltip } from 'element-plus'
 
@@ -18,6 +18,7 @@ import { useDiagramStore, usePanelsStore, useUIStore } from '@/stores'
 import {
   isDefaultFocusQuestionLabel,
   shouldReplaceLabelWithMathInsert,
+  stripAnyFocusQuestionLabel,
   stripConceptMapFocusQuestionPrefix,
 } from '@/stores/diagram/diagramDefaultLabels'
 import {
@@ -269,7 +270,16 @@ async function buildConceptHierarchyFromAnswer(
   eventBus.emit('view:fit_to_canvas_requested', { animate: true, maxZoom: 1 })
 }
 
-async function handleDiagramGeneration(): Promise<void> {
+async function handleDiagramGeneration(opts?: {
+  /**
+   * 可选的"聊天展示文本"。
+   * - 当 MindMate 面板从用户原话识别到"生成概念图"意图时，把用户原话传进来作为
+   *   displayMessage，确保聊天历史里显示的就是用户实际输入的句子，而不是
+   *   `t('canvas.toolbar.diagramGenerationDisplay')` 这个固定模板。
+   * - 工具栏按钮直接调用本函数时不传这个参数，沿用默认模板。
+   */
+  displayMessageOverride?: string
+}): Promise<void> {
   if (!isConceptMap.value) return
 
   const question = resolveFocusQuestion()
@@ -279,7 +289,12 @@ async function handleDiagramGeneration(): Promise<void> {
   }
 
   const prompt = t('canvas.toolbar.diagramGenerationPrompt', { question })
-  const displayMessage = t('canvas.toolbar.diagramGenerationDisplay', { question })
+  // 优先使用调用方传入的"用户原话"，否则回退到 i18n 默认展示模板
+  const overrideText = opts?.displayMessageOverride?.trim()
+  const displayMessage =
+    overrideText && overrideText.length > 0
+      ? overrideText
+      : t('canvas.toolbar.diagramGenerationDisplay', { question })
 
   // 清空现有的根节点/概念节点/连线，只保留焦点问题框
   clearConceptMapExceptFocusQuestion()
@@ -383,6 +398,57 @@ function handleToggleOrientation() {
   diagramStore.toggleFlowMapOrientation()
   notify.success(t('canvas.toolbar.layoutDirectionToggled'))
 }
+
+/**
+ * 监听 MindMate 等外部模块发起的"根据焦点问题生成概念图"请求：
+ * 若带 question，则先把焦点问题写入 topic 节点 + spec，再走标准生成流程；
+ * 若 question 为空，则直接复用工具栏按钮的逻辑。
+ */
+let unsubFocusQuestionGenerate: (() => void) | null = null
+
+onMounted(() => {
+  unsubFocusQuestionGenerate = eventBus.on(
+    'concept_map:focus_question_generation_requested',
+    async (payload) => {
+      if (!isConceptMap.value) return
+
+      const trimmed =
+        typeof payload?.question === 'string' ? payload.question.trim() : ''
+      const originalMessage =
+        typeof payload?.originalMessage === 'string'
+          ? payload.originalMessage.trim()
+          : ''
+      if (trimmed) {
+        // 1) 强力剥离用户输入中所有可能的"焦点问题"前缀变体（中文冒号、英文
+        //    冒号、不带冒号、连写多次等），得到一个干净的"纯"焦点问题文本。
+        //    这样后续拼接 "焦点问题:" + 纯问题 不会出现 "焦点问题:焦点问题:xxx"。
+        const pureQuestion = stripAnyFocusQuestionLabel(trimmed).trim() || trimmed
+
+        // 2) 写入 topic 节点显示文本：标准 i18n 前缀 + 纯焦点问题；
+        //    与画布默认占位形态保持一致（用户在 UI 直接编辑也是 "焦点问题:xxx"）。
+        const prefix = t('diagram.conceptMap.focusQuestionPrefix')
+        const topicText = `${prefix}${pureQuestion}`
+        diagramStore.updateNode('topic', { text: topicText })
+
+        // 3) updateNode 内部会同步 data.focus_question = topicText（带前缀）。
+        //    覆写为"纯"焦点问题，确保 LLM prompt 与根节点提取得到的都是无前缀文本。
+        const data = diagramStore.data as Record<string, unknown> | undefined
+        if (data) data.focus_question = pureQuestion
+
+        diagramStore.pushHistory(t('canvas.toolbar.diagramGeneration'))
+        await nextTick()
+      }
+
+      // 把用户原话作为聊天展示文本透传下去，避免聊天里显示的是固定模板
+      await handleDiagramGeneration({ displayMessageOverride: originalMessage })
+    }
+  )
+})
+
+onUnmounted(() => {
+  unsubFocusQuestionGenerate?.()
+  unsubFocusQuestionGenerate = null
+})
 </script>
 
 <template>

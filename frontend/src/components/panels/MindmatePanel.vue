@@ -8,9 +8,11 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { useLanguage, useMindMate, useNotifications } from '@/composables'
+import { eventBus } from '@/composables/core/useEventBus'
 import type { FeedbackRating } from '@/composables/mindmate/useMindMate'
 import { useConversations, usePinnedConversations } from '@/composables/queries'
-import { useAuthStore, useMindMateStore, useUIStore } from '@/stores'
+import { useAuthStore, useDiagramStore, useMindMateStore, useUIStore } from '@/stores'
+import { stripAnyFocusQuestionLabel } from '@/stores/diagram/diagramDefaultLabels'
 
 import ShareExportModal from './ShareExportModal.vue'
 import ConversationHistory from './mindmate/ConversationHistory.vue'
@@ -50,6 +52,7 @@ const { promptLanguage, t } = useLanguage()
 const notify = useNotifications()
 const authStore = useAuthStore()
 const mindMateStore = useMindMateStore()
+const diagramStore = useDiagramStore()
 
 // Typing effect state
 const displayTitle = ref('MindMate')
@@ -175,6 +178,118 @@ async function deleteConversationFromHistory(convId: string) {
   }
 }
 
+/**
+ * 用户输入里"包裹焦点问题"的常见引号字符集合（中英文 / 单双引号 / 直角引号）。
+ * 用于优先策略：当用户写 `请帮我生成焦点问题为"光合作用"的概念图` 时，
+ * 引号内才是真正的焦点问题，绕开复杂的模板剥离。
+ */
+const QUOTE_OPEN_CLOSE_CLASS = '[\\u201c\\u201d\\u2018\\u2019\\u300c\\u300d\\u300e\\u300f"\']'
+
+/**
+ * 识别用户输入是否为"根据焦点问题生成概念图"的意图。
+ * 仅当输入中明确包含"概念图 / concept map"关键词时才视为命中，
+ * 防止把普通问答误判成生成请求。
+ *
+ * 命中后返回提取出的纯焦点问题（不带任何"焦点问题/Focus question"标签
+ * 和命令性短语）；未命中或无法提取出有效焦点问题时返回 null。
+ */
+function extractFocusQuestionFromIntent(input: string): string | null {
+  const text = input.trim()
+  if (!text) return null
+
+  // 必须明确提到"概念图 / concept map"才算"生成概念图"意图
+  if (!/概念图|concept[\s-]*map/i.test(text)) return null
+
+  // ──────────────────────────────────────────────────────────────────
+  // 策略 1：优先匹配引号包裹的内容。覆盖 99% 的"请生成焦点问题为'xxx'的概念图"
+  //   写法，能避开"焦点问题为""的"等连接词的复杂剥离逻辑。
+  // ──────────────────────────────────────────────────────────────────
+  const quotedRegex = new RegExp(
+    `${QUOTE_OPEN_CLOSE_CLASS}([^${QUOTE_OPEN_CLOSE_CLASS.slice(1, -1)}]{2,})${QUOTE_OPEN_CLOSE_CLASS}`,
+    'u'
+  )
+  const quotedMatch = text.match(quotedRegex)
+  if (quotedMatch && quotedMatch[1]) {
+    const inside = quotedMatch[1].trim()
+    const cleaned = stripAnyFocusQuestionLabel(inside).trim()
+    if (cleaned.length >= 2) return cleaned
+    if (inside.length >= 2) return inside
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // 策略 2：无引号时，按顺序剥离常见模板。
+  // ──────────────────────────────────────────────────────────────────
+  let q = text
+    // 礼貌语 / 命令前缀
+    .replace(/^(请|麻烦|帮我|帮忙|劳烦|请你|please|help me|can you|could you)[\s,，:：]*/giu, '')
+    // "生成 / 制作 / generate" 等动词（含可选量词、可选介词"关于/为"等）
+    .replace(
+      /(生成|制作|绘制|画出|画|创建|创作|做出|做|产生|帮做|generate|create|draw|make|build)[\s]*(一个|个|一张|张|一幅|幅|a|an|the)?[\s]*(关于|针对|基于|围绕|对于|对|为|of|for|about|on|regarding)?/giu,
+      ' '
+    )
+    // ★ 关键：剥离"焦点问题为/是/的/:" 等模板（无论中英冒号）
+    .replace(
+      /(焦点问题|焦點問題|focus[\s-]*question)[\s\u00a0]*(为|是|的|:|：)?[\s\u00a0]*/giu,
+      ' '
+    )
+    // "概念图"关键词（含可能的前置"的/一张/一幅"）
+    .replace(/(的|关于)?(一个|个|一张|张|一幅|幅)?[\s]*(概念图|concept[\s-]*map)/giu, ' ')
+    // 残留的纯介词
+    .replace(/(关于|针对|基于|围绕|对于|对|以|为|of|for|about|on|regarding)/giu, ' ')
+    // 清理首尾的引号 / 标点 / 空白
+    .replace(/^[\s\u00a0\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f"'，,。.;；:：、！!？?]+/u, '')
+    .replace(/[\s\u00a0\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f"'，,。.;；:：、]+$/u, '')
+    // 末尾的"的"（如 "...的概念图" 剥完概念图后还会留个"的"）
+    .replace(/的$/u, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  // 最终再走一次强力剥离，处理任何遗漏的"焦点问题"标签
+  q = stripAnyFocusQuestionLabel(q).trim()
+
+  // 兜底：完全剥不出来时，回退到"原文剔除关键词后剩余的内容"
+  if (!q || q.length < 2) {
+    const fallback = stripAnyFocusQuestionLabel(
+      text
+        .replace(/(概念图|concept[\s-]*map)/giu, '')
+        .replace(
+          /[\s\u00a0\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f"'，,。.;；:：、！!？?]+/g,
+          ' '
+        )
+        .trim()
+    ).trim()
+    return fallback.length >= 2 ? fallback : null
+  }
+
+  return q
+}
+
+/**
+ * 在画布的迷你 MindMate 面板里，若识别到"生成概念图"意图，
+ * 则把用户给的焦点问题写入画布顶部的"焦点问题"框，并触发已有的生成流程。
+ *
+ * @returns 是否成功拦截并触发生成（true 时调用方应跳过普通的发送逻辑）
+ */
+function tryTriggerConceptMapGeneration(message: string): boolean {
+  // 只在画布的迷你 MindMate（panel 模式）+ 概念图类型下生效；
+  // 在独立的 MindMate 全屏页（fullpage 模式）保持原有问答行为。
+  if (props.mode !== 'panel') return false
+  if (diagramStore.type !== 'concept_map') return false
+
+  const question = extractFocusQuestionFromIntent(message)
+  if (!question) return false
+
+  // 把"用户原话"通过 originalMessage 字段透传给 CanvasToolbar，
+  // CanvasToolbar 在调用 handleDiagramGeneration 时会用它覆盖 displayMessage，
+  // 让聊天历史里展示的就是用户实际输入的句子，而不是 i18n 固定模板。
+  // 也因此不需要在这里手动 push 一条用户消息——避免聊天里出现两条重复消息。
+  eventBus.emit('concept_map:focus_question_generation_requested', {
+    question,
+    originalMessage: message,
+  })
+  return true
+}
+
 // Send message using composable
 async function sendMessage() {
   if ((!inputText.value.trim() && mindMate.pendingFiles.value.length === 0) || isLoading.value)
@@ -182,6 +297,11 @@ async function sendMessage() {
 
   const message = inputText.value.trim()
   inputText.value = ''
+
+  // 识别"根据焦点问题生成概念图"意图：先把焦点问题写入画布顶部，再触发生成流程
+  if (tryTriggerConceptMapGeneration(message)) {
+    return
+  }
 
   await mindMate.sendMessage(message)
 }

@@ -119,6 +119,17 @@ export type EventTypes = {
     sourceId: string
     targetId: string
   }
+  /**
+   * 触发"根据焦点问题生成概念图"流程。
+   * - question 不为空时：先把焦点问题写入 topic 节点和 spec.focus_question，再走标准生成流程；
+   * - question 为空时：直接使用画布当前的焦点问题走标准生成流程（等价于工具栏按钮）。
+   * - originalMessage 为可选：当从 MindMate 聊天面板发起时，用于在聊天历史里
+   *   展示用户的原话，而不是 i18n 模板替换后的固定句式。
+   */
+  'concept_map:focus_question_generation_requested': {
+    question?: string
+    originalMessage?: string
+  }
   'diagram:update_requested': {
     updates?: unknown
     source?: string

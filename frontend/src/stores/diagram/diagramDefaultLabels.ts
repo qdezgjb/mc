@@ -344,6 +344,43 @@ export function stripConceptMapFocusQuestionPrefix(raw: string): string {
   return trimmed
 }
 
+/**
+ * 比 stripConceptMapFocusQuestionPrefix 更宽松的剥离器。
+ *
+ * 除标准 i18n 前缀（"焦点问题:" / "Focus question: " 等）外，还兼容用户/AI
+ * 在自然语言里常见的所有"焦点问题"标签变体：
+ *   - 中文冒号："焦点问题：xxx"
+ *   - 不带冒号纯空白："焦点问题 xxx"
+ *   - 多次连写："焦点问题：焦点问题：xxx"
+ *   - 中文繁体："焦點問題：xxx"
+ *   - 英文："Focus question - xxx"、"Focus question:xxx"
+ *
+ * 适用场景：MindMate 聊天面板把用户输入解析成焦点问题、把焦点问题写回 topic
+ * 节点文本之前的兜底归一化，确保最终拿到的是"纯"焦点问题内容。
+ */
+export function stripAnyFocusQuestionLabel(raw: string): string {
+  let s = stripConceptMapFocusQuestionPrefix(raw)
+  for (let i = 0; i < 5; i++) {
+    const next = s
+      // "焦点问题"标签 + 中/英冒号或破折号 + 空白
+      .replace(
+        /^[\s\u00a0]*(焦点问题|焦點問題|focus[\s\u00a0]*question)[\s\u00a0]*[:：\-—]+[\s\u00a0]*/iu,
+        ''
+      )
+      // 没冒号但有空白分隔："焦点问题 xxx"
+      .replace(
+        /^[\s\u00a0]*(焦点问题|焦點問題|focus[\s\u00a0]*question)[\s\u00a0]+/iu,
+        ''
+      )
+      // 仅剥前面再次出现的标准 i18n 前缀
+      .trim()
+    const stripped = stripConceptMapFocusQuestionPrefix(next)
+    if (stripped === s) break
+    s = stripped
+  }
+  return s
+}
+
 export function isDefaultFocusQuestionLabel(label: string): boolean {
   return ALL_FOCUS_QUESTION_DEFAULTS.includes(label.trim())
 }
