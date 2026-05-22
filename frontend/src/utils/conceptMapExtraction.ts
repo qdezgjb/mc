@@ -37,6 +37,10 @@ export interface ParsedNounItem {
   description?: string
   /** level-3 → level-4 边上的连接词/动词短语；缺失时边无标签。 */
   connectorLabel?: string
+  /** level-4 → level-5 边上的连接词/动词短语；缺失时不生成 level-5 节点。 */
+  detailConnectorLabel?: string
+  /** level-5 节点文本，用于把 level-4 再向下展开一层。 */
+  detailDescription?: string
   /** level-2 → level-3 边上的连接词（来自紧邻【】之前的 `「...」`）；缺失时边无标签。 */
   incomingConnector?: string
 }
@@ -305,6 +309,11 @@ const NON_NOUN_WORDS: readonly string[] = [
   '衰退',
   '需要',
   '要求',
+  '确认',
+  '实现',
+  '证明',
+  '缓解',
+  '拓展',
   '提出',
   '提供',
   '带有',
@@ -453,12 +462,12 @@ export function extractMarkedNouns(text: string, maxCount: number = 4): ParsedNo
   //
   // - 前缀 `「...」`（方括号引号）：可选，作为 level-2→level-3 的 incomingConnector
   // - 主体 `【...】` 或半角 `[...]`：必须，为名词本身
-  // - 后缀 `『...』`（直角引号）最多两对：第一对=动词，第二对=宾语
+  // - 后缀 `『...』`（直角引号）最多四对：第一/三对=动词，第二/四对=宾语
   //
   // 注意：前缀和后缀使用**不同**的引号家族（「」 vs 『』），避免把上一个名词
   // 的尾部宾语误判为下一个名词的前置连接词。
   const re =
-    /(?:「\s*([^「」\n]{1,10}?)\s*」)?\s{0,4}(?:【\s*([^【】\n]+?)\s*】|\[\s*([^[\]\n]+?)\s*\])(?:\s{0,4}『\s*([^『』\n]{1,20}?)\s*』)?(?:\s{0,4}『\s*([^『』\n]{1,30}?)\s*』)?/gu
+    /(?:「\s*([^「」\n]{1,10}?)\s*」)?\s{0,4}(?:【\s*([^【】\n]+?)\s*】|\[\s*([^[\]\n]+?)\s*\])(?:\s{0,4}『\s*([^『』\n]{1,20}?)\s*』)?(?:\s{0,4}『\s*([^『』\n]{1,40}?)\s*』)?(?:\s{0,4}『\s*([^『』\n]{1,20}?)\s*』)?(?:\s{0,4}『\s*([^『』\n]{1,40}?)\s*』)?/gu
   let m: RegExpExecArray | null
   while ((m = re.exec(text)) !== null) {
     const rawNoun = (m[2] ?? m[3] ?? '').trim()
@@ -477,23 +486,50 @@ export function extractMarkedNouns(text: string, maxCount: number = 4): ParsedNo
     const rawIncoming = (m[1] ?? '').trim()
     const rawFirst = (m[4] ?? '').trim()
     const rawSecond = (m[5] ?? '').trim()
+    const rawThird = (m[6] ?? '').trim()
+    const rawFourth = (m[7] ?? '').trim()
 
     const incomingConnector = cleanConnector(rawIncoming)
 
-    // 两段都给了：第一段=动词，第二段=具体内容（宾语）
-    // 仅给了一段：作为 level-4 节点文本（兼容老格式）
+    // 双段：第一段=动词（边 label）、第二段=宾语（level-4 节点）
+    // 单段：模型偷工只给了一段；无法可靠区分是动词还是宾语
+    //   → 把这一段合并进名词节点文本（如 "参数化（轨迹方程化简）"）
+    //     这样既不丢失 LLM 给出的信息，又不会让 level-3→level-4 的边
+    //     出现 label='' 时的 "请输入关系" 占位文本。
+    let nodeText = clean
     let connectorLabel = ''
     let description = ''
+    let detailConnectorLabel = ''
+    let detailDescription = ''
     if (rawFirst && rawSecond) {
       connectorLabel = cleanConnector(rawFirst)
       description = cleanDescription(rawSecond, clean)
+      if (description && rawThird && rawFourth) {
+        detailConnectorLabel = cleanConnector(rawThird)
+        detailDescription = cleanDescription(rawFourth, description)
+      }
     } else if (rawFirst) {
-      description = cleanDescription(rawFirst, clean)
+      const tail = cleanDescription(rawFirst, clean)
+      if (tail) {
+        const combined = `${clean}（${tail}）`
+        // 控制节点文本长度，避免超出节点框；超过阈值则直接丢弃 tail，
+        // 宁可少一点信息也不画"无关系"的子节点。
+        if (combined.length <= 28) nodeText = combined
+      }
     }
 
-    const item: ParsedNounItem = { text: clean }
+    // 防止两个同义节点被合并文本后撞名（如"参数化（…）"出现两次）
+    if (nodeText !== clean && seen.has(nodeText)) {
+      // 同义合并已存在，回退到纯名词
+      nodeText = clean
+    }
+    if (nodeText !== clean) seen.add(nodeText)
+
+    const item: ParsedNounItem = { text: nodeText }
     if (description) item.description = description
     if (connectorLabel) item.connectorLabel = connectorLabel
+    if (detailDescription) item.detailDescription = detailDescription
+    if (detailConnectorLabel) item.detailConnectorLabel = detailConnectorLabel
     if (incomingConnector) item.incomingConnector = incomingConnector
     result.push(item)
     if (result.length >= maxCount) break
@@ -511,7 +547,7 @@ export function extractMarkedNouns(text: string, maxCount: number = 4): ParsedNo
  *   - 去掉首尾空白、常见标点、残留引号。
  *   - 去掉开头的动词 / 助词 / 副词（如"是/为/成为/推动/使/领导"等）。
  *   - 过滤过短（<2 字）或与名词完全相同的内容。
- *   - 过长（>14 字）的截断到 14 字。
+ *   - 过长（>24 字）的截断到 24 字。
  */
 function cleanDescription(raw: string, nounText: string): string {
   if (!raw) return ''
@@ -535,7 +571,6 @@ function cleanDescription(raw: string, nounText: string): string {
   if (!s) return ''
   if (s === nounText) return ''
   if (s.length < 2) return ''
-  if (s.length > 14) s = s.slice(0, 14)
   return s
 }
 
@@ -551,7 +586,6 @@ function cleanConnector(raw: string): string {
     .replace(/[\s，,。.；;：:、"'""''「」『』（）()]+$/u, '')
     .trim()
   if (!s) return ''
-  if (s.length > 8) s = s.slice(0, 8)
   return s
 }
 
@@ -669,9 +703,13 @@ export function parseDiagramGenerationResponse(text: string): ParsedConceptMapRe
     if (nouns.length === 0) {
       nouns = extractNounTokens(source, 4)
     }
+    if (nouns.length === 0) {
+      const fallbackNoun = normalizeAspectHeading(heading, source) || '核心概念'
+      nouns = [{ text: fallbackNoun }]
+    }
 
     const aspect: ParsedAspect = {
-      heading: cleanHeading(heading) || (remainder.length > 8 ? remainder.slice(0, 8) : remainder),
+      heading: normalizeAspectHeading(heading, source),
       body: source,
       nouns,
     }
@@ -690,6 +728,19 @@ function cleanHeading(heading: string): string {
     .trim()
 }
 
+function normalizeAspectHeading(heading: string, source: string): string {
+  const cleaned = cleanHeading(heading)
+  if (cleaned) return cleaned
+
+  const nouns = extractMarkedNouns(source, 1)
+  if (nouns[0]?.text) return nouns[0].text
+
+  const fallbackNouns = extractNounTokens(source, 1)
+  if (fallbackNouns[0]?.text) return fallbackNouns[0].text
+
+  return '核心方面'
+}
+
 /**
  * 拆分 "政治背景：xxxxxx" / "政治背景（xxxxxx）" / "政治背景 xxx"。
  */
@@ -698,7 +749,7 @@ function splitHeadingAndBody(text: string): { heading: string; body: string } {
   if (!t) return { heading: '', body: '' }
 
   // 先尝试中英文冒号
-  const colonMatch = t.match(/^([^\s:：()（）]{2,12})[\s]*[:：]\s*([\s\S]+)$/u)
+  const colonMatch = t.match(/^([^:：()（）\n]{2,28})[\s]*[:：]\s*([\s\S]+)$/u)
   if (colonMatch) {
     return { heading: colonMatch[1].trim(), body: colonMatch[2].trim() }
   }
@@ -762,7 +813,7 @@ export function extractRootFromFocusQuestion(question: string): string {
 // ============================================================================
 
 /** 每一层之间的纵向间距（保持一致）。 */
-export const HIERARCHY_LEVEL_GAP = 200
+export const HIERARCHY_LEVEL_GAP = 270
 
 /**
  * 名词节点（level-3）/说明节点（level-4）之间的横向最小间距。
@@ -770,13 +821,117 @@ export const HIERARCHY_LEVEL_GAP = 200
  * level-4 节点承载 6~12 字的"短谓语说明"（与父名词连读成一句话），
  * 宽度较 level-3 略大但仍可控，200 px 足以避免相邻说明节点水平重叠。
  */
-export const HIERARCHY_CHILD_H_SPACING = 200
+export const HIERARCHY_CHILD_H_SPACING = 390
 
 /** 方面（level-2）列之间的额外留白。 */
-export const HIERARCHY_SECTION_GAP = 80
+export const HIERARCHY_SECTION_GAP = 190
 
-/** 假定节点宽度，用于居中计算。与 layoutConfig.DEFAULT_NODE_WIDTH 一致。 */
-const HIERARCHY_NODE_WIDTH = 120
+/** 生成概念图节点的基础宽度。实际渲染会按文本再放大。 */
+const HIERARCHY_NODE_WIDTH = 220
+const HIERARCHY_NODE_HEIGHT = 70
+const HIERARCHY_NODE_MIN_GAP = 70
+const HIERARCHY_DETAIL_BRANCH_X_GAP = 190
+const HIERARCHY_DETAIL_SINGLE_X_GAP = 96
+
+const MAX_NODE_TEXT_BY_LEVEL = {
+  1: 12,
+  2: 8,
+  3: 9,
+  4: 10,
+  5: 10,
+} as const
+
+const STAGGER_X = 36
+
+function estimateNodeWidth(text: string): number {
+  const plain = compactNodeText(text, 0)
+  const cjkCount = Array.from(plain).filter((ch) => /[\u4e00-\u9fff]/u.test(ch)).length
+  const otherCount = Math.max(0, Array.from(plain).length - cjkCount)
+  const estimated = 90 + cjkCount * 19 + otherCount * 12
+  return Math.max(HIERARCHY_NODE_WIDTH, Math.min(estimated, 420))
+}
+
+function positionXForCenter(centerX: number, text: string): number {
+  return centerX - estimateNodeWidth(text) / 2
+}
+
+function avoidSameLayerOverlaps(nodes: HierarchyNodeLayout[]): void {
+  for (const level of [1, 2, 3, 4, 5] as const) {
+    const layerNodes = nodes
+      .filter((node) => node.level === level)
+      .sort((a, b) => a.position.x - b.position.x)
+
+    for (let i = 0; i < layerNodes.length; i++) {
+      const current = layerNodes[i]
+      const currentWidth = estimateNodeWidth(current.text)
+      let requiredX = current.position.x
+
+      for (let j = 0; j < i; j++) {
+        const previous = layerNodes[j]
+        const previousWidth = estimateNodeWidth(previous.text)
+        const verticallyClose =
+          Math.abs(previous.position.y - current.position.y) <
+          HIERARCHY_NODE_HEIGHT + HIERARCHY_NODE_MIN_GAP
+        if (!verticallyClose) continue
+
+        const previousRight = previous.position.x + previousWidth
+        requiredX = Math.max(requiredX, previousRight + HIERARCHY_NODE_MIN_GAP)
+      }
+
+      current.position.x = requiredX
+    }
+  }
+}
+
+function compactNodeText(text: string, maxChars: number): string {
+  const s = (text || '')
+    .replace(/[「」『』【】[\]（）()]/gu, '')
+    .replace(/\s+/gu, '')
+    .trim()
+  if (!s) return ''
+  // Do not hard-cut generated concepts. A raw slice can turn "人工智能" into
+  // "人工智", which is worse than a slightly longer node. Shortness is enforced
+  // in the generation prompt; this function only removes wrapper punctuation.
+  void maxChars
+  return s
+}
+
+function ensureConnector(label: string | undefined, fallback: string): string {
+  const cleaned = cleanConnector(label || '')
+  if (!cleaned) return fallback
+  if (/^(输入关系|请输入关系|关系|待补充|placeholder|todo|tbd|none|null)$/iu.test(cleaned)) {
+    return fallback
+  }
+  return cleaned
+}
+
+function conciseFallbackBase(text: string): string {
+  const cleaned = compactNodeText(text, MAX_NODE_TEXT_BY_LEVEL[4])
+  if (!cleaned) return ''
+  const parts = cleaned.split(/[与和及、并]/u).map((part) => part.trim()).filter(Boolean)
+  const shortPart = parts.find((part) => part.length >= 2 && part.length <= 10)
+  return shortPart || (cleaned.length <= 10 ? cleaned : '')
+}
+
+function fallbackLevel4Text(nounText: string, aspectHeading: string): string {
+  const base = conciseFallbackBase(aspectHeading) || conciseFallbackBase(nounText)
+  return compactNodeText(`${base}要点`, MAX_NODE_TEXT_BY_LEVEL[4]) ||
+    compactNodeText(`${nounText}作用`, MAX_NODE_TEXT_BY_LEVEL[4]) ||
+    '核心要点'
+}
+
+function fallbackLevel5Text(nounText: string, description: string): string {
+  return compactNodeText(`${nounText}表现`, MAX_NODE_TEXT_BY_LEVEL[5]) ||
+    compactNodeText(`${description}结果`, MAX_NODE_TEXT_BY_LEVEL[5]) ||
+    '具体表现'
+}
+
+function fallbackLevel5BranchText(nounText: string, description: string): string {
+  const base = conciseFallbackBase(description) || conciseFallbackBase(nounText)
+  return compactNodeText(`${base}延伸`, MAX_NODE_TEXT_BY_LEVEL[5]) ||
+    compactNodeText(`${nounText}影响`, MAX_NODE_TEXT_BY_LEVEL[5]) ||
+    '延伸影响'
+}
 
 export interface HierarchyInput {
   /** 焦点问题节点的 position.x（左上角）。 */
@@ -796,8 +951,8 @@ export interface HierarchyNodeLayout {
   text: string
   position: { x: number; y: number }
   parentId: string | null
-  /** 1=根概念，2=方面，3=关键名词，4=名词的具体说明。 */
-  level: 1 | 2 | 3 | 4
+  /** 1=根概念，2=方面，3=关键名词，4=名词的具体说明，5=说明的再展开。 */
+  level: 1 | 2 | 3 | 4 | 5
 }
 
 export interface HierarchyLayoutResult {
@@ -822,16 +977,18 @@ export function computeHierarchyLayout(input: HierarchyInput): HierarchyLayoutRe
   const aspectY = rootY + HIERARCHY_LEVEL_GAP
   const nounY = aspectY + HIERARCHY_LEVEL_GAP
   const descY = nounY + HIERARCHY_LEVEL_GAP
+  const detailY = descY + HIERARCHY_LEVEL_GAP
 
   const nodes: HierarchyNodeLayout[] = []
   const edges: Array<{ source: string; target: string; label?: string }> = []
+  let detailIndex = 0
 
   // ---- 根节点（仅 1 个）
   // 注意：焦点问题（topic）与根节点（root）之间**不建立连线**，
   // 只做空间位置上的层级关系；避免视觉上顶部出现多余的一条长线。
   nodes.push({
     id: 'root',
-    text: rootText,
+    text: compactNodeText(rootText, MAX_NODE_TEXT_BY_LEVEL[1]) || rootText,
     position: { x: topicCenterX - nodeHalf, y: rootY },
     parentId: null,
     level: 1,
@@ -857,12 +1014,13 @@ export function computeHierarchyLayout(input: HierarchyInput): HierarchyLayoutRe
   aspects.forEach((aspect, aIdx) => {
     const width = sectionWidths[aIdx]
     const sectionCenterX = cursor + width / 2
+    const aspectCenterX = sectionCenterX + (aIdx % 2 === 0 ? -STAGGER_X : STAGGER_X)
 
     const aspectId = `aspect-${aIdx}`
     nodes.push({
       id: aspectId,
-      text: aspect.heading,
-      position: { x: sectionCenterX - nodeHalf, y: aspectY },
+      text: compactNodeText(aspect.heading, MAX_NODE_TEXT_BY_LEVEL[2]) || aspect.heading,
+      position: { x: aspectCenterX - nodeHalf, y: aspectY },
       parentId: 'root',
       level: 2,
     })
@@ -870,8 +1028,8 @@ export function computeHierarchyLayout(input: HierarchyInput): HierarchyLayoutRe
       const e: { source: string; target: string; label?: string } = {
         source: 'root',
         target: aspectId,
+        label: ensureConnector(aspect.incomingConnector, '体现为'),
       }
-      if (aspect.incomingConnector) e.label = aspect.incomingConnector
       edges.push(e)
     }
 
@@ -881,12 +1039,16 @@ export function computeHierarchyLayout(input: HierarchyInput): HierarchyLayoutRe
       // 子节点在 [cursor, cursor+width] 区间内等间距居中
       for (let i = 0; i < childCount; i++) {
         const childCenterX = cursor + HIERARCHY_CHILD_H_SPACING * (i + 0.5)
+        const rowOffset = (aIdx + i) % 2 === 0 ? -STAGGER_X : STAGGER_X
+        const nounCenterX = childCenterX - rowOffset
+        const descCenterX = childCenterX + rowOffset
         const nounItem = aspect.nouns[i]
         const nounId = `noun-${aIdx}-${i}`
+        const nounText = compactNodeText(nounItem.text, MAX_NODE_TEXT_BY_LEVEL[3]) || nounItem.text
         nodes.push({
           id: nounId,
-          text: nounItem.text,
-          position: { x: childCenterX - nodeHalf, y: nounY },
+          text: nounText,
+          position: { x: nounCenterX - nodeHalf, y: nounY },
           parentId: aspectId,
           level: 3,
         })
@@ -894,34 +1056,89 @@ export function computeHierarchyLayout(input: HierarchyInput): HierarchyLayoutRe
           const e: { source: string; target: string; label?: string } = {
             source: aspectId,
             target: nounId,
+            label: ensureConnector(nounItem.incomingConnector, '包含'),
           }
-          if (nounItem.incomingConnector) e.label = nounItem.incomingConnector
           edges.push(e)
         }
 
         // level-4：该名词对应的"具体内容"节点（纯名词短语），
         // level-3→level-4 的连接词（动词）作为边 label 显示。
-        if (nounItem.description) {
-          const descId = `desc-${aIdx}-${i}`
-          nodes.push({
-            id: descId,
-            text: nounItem.description,
-            position: { x: childCenterX - nodeHalf, y: descY },
-            parentId: nounId,
-            level: 4,
-          })
-          const edge: { source: string; target: string; label?: string } = {
-            source: nounId,
-            target: descId,
-          }
-          if (nounItem.connectorLabel) edge.label = nounItem.connectorLabel
-          edges.push(edge)
+        const rawDesc = nounItem.description || fallbackLevel4Text(nounText, aspect.heading)
+        const descText = compactNodeText(rawDesc, MAX_NODE_TEXT_BY_LEVEL[4]) || rawDesc
+        const descId = `desc-${aIdx}-${i}`
+        nodes.push({
+          id: descId,
+          text: descText,
+          position: { x: descCenterX - nodeHalf, y: descY },
+          parentId: nounId,
+          level: 4,
+        })
+        const edge: { source: string; target: string; label?: string } = {
+          source: nounId,
+          target: descId,
+          label: ensureConnector(nounItem.connectorLabel, '表现为'),
         }
+        edges.push(edge)
+
+        const detailYOffset = (((detailIndex * 3 + aIdx + i) % 5) - 2) * 34
+        const shouldAddSecondDetail = detailIndex % 2 === 0
+        const rawDetail =
+          nounItem.detailDescription || fallbackLevel5Text(nounText, descText)
+        const detailText = compactNodeText(rawDetail, MAX_NODE_TEXT_BY_LEVEL[5]) || rawDetail
+        const descVisualCenterX = descCenterX
+        const singleDetailSide = detailIndex % 2 === 0 ? -1 : 1
+        const firstDetailCenterX = shouldAddSecondDetail
+          ? descVisualCenterX - HIERARCHY_DETAIL_BRANCH_X_GAP
+          : descVisualCenterX + singleDetailSide * HIERARCHY_DETAIL_SINGLE_X_GAP
+        const detailId = `detail-${aIdx}-${i}`
+        nodes.push({
+          id: detailId,
+          text: detailText,
+          position: {
+            x: positionXForCenter(firstDetailCenterX, detailText),
+            y: detailY + detailYOffset,
+          },
+          parentId: descId,
+          level: 5,
+        })
+        const detailEdge: { source: string; target: string; label?: string } = {
+          source: descId,
+          target: detailId,
+          label: ensureConnector(nounItem.detailConnectorLabel, '进一步'),
+        }
+        edges.push(detailEdge)
+
+        if (shouldAddSecondDetail) {
+          const rawSecondDetail = fallbackLevel5BranchText(nounText, descText)
+          const secondDetailText =
+            compactNodeText(rawSecondDetail, MAX_NODE_TEXT_BY_LEVEL[5]) || rawSecondDetail
+          const secondDetailId = `detail-${aIdx}-${i}-b`
+          const secondDetailCenterX = descVisualCenterX + HIERARCHY_DETAIL_BRANCH_X_GAP
+          nodes.push({
+            id: secondDetailId,
+            text: secondDetailText,
+            position: {
+              x: positionXForCenter(secondDetailCenterX, secondDetailText),
+              y: detailY + detailYOffset + 116,
+            },
+            parentId: descId,
+            level: 5,
+          })
+          const secondDetailEdge: { source: string; target: string; label?: string } = {
+            source: descId,
+            target: secondDetailId,
+            label: '同时',
+          }
+          edges.push(secondDetailEdge)
+        }
+        detailIndex += 1
       }
     }
 
     cursor += width + HIERARCHY_SECTION_GAP
   })
+
+  avoidSameLayerOverlaps(nodes)
 
   return { nodes, edges }
 }

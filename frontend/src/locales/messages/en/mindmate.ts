@@ -31,6 +31,12 @@ export default {
   'autoComplete.modelsReadyCount': '{success}/{total} models ready',
   'autoComplete.noDiagramData': 'No diagram data',
   'autoComplete.selectDiagramType': 'Please select diagram type',
+  'conceptMapImage.analyzingImageForFocusQuestion':
+    'Reading the image and extracting a focus question...',
+  'conceptMapImage.generateFromImageWithFocusQuestion':
+    'Generate a concept map from the image (focus question: {question})',
+  'conceptMapImage.imageFocusQuestionExtractFailed':
+    'Failed to extract a focus question from the image',
   'conceptMapPicker.currentFocusQuestion': 'Current focus question',
   'conceptMapPicker.currentRootConcept': 'Current root concept',
   'conceptMapPicker.focusAlternativesHint': 'Alternatives ({pageSize} per page, adaptive height)',

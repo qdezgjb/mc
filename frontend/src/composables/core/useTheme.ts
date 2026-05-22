@@ -76,7 +76,7 @@ const DEFAULT_THEMES: Partial<Record<DiagramType, DiagramTheme>> = {
     conceptStrokeWidth: 2,
     relationshipColor: '#666666',
     relationshipStrokeWidth: 2,
-    fontTopic: 18,
+    fontTopic: 30,
     fontConcept: 14,
   },
   brace_map: {

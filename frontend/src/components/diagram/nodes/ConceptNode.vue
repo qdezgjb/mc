@@ -57,8 +57,22 @@ const focusQuestionMutedTailSplit = computed(() => {
 
 /** Wide caps so Markdown/KaTeX can size the pill to real content (still bounded for canvas) */
 const conceptMapInlineMaxWidth = computed(() =>
-  isTopic.value ? 'min(560px, 94vw)' : 'min(480px, 92vw)'
+  isTopic.value ? 'min(820px, 94vw)' : 'min(480px, 92vw)'
 )
+
+const dimensionStyle = computed(() => {
+  const style = props.data.style || {}
+  const topicDefaults =
+    isTopic.value && props.data.diagramType === 'concept_map'
+      ? { width: 760, height: 104 }
+      : {}
+  const width = style.width ?? topicDefaults.width
+  const height = style.height ?? topicDefaults.height
+  return {
+    ...(width ? { width: `${width}px`, minWidth: `${width}px` } : {}),
+    ...(height ? { minHeight: `${height}px` } : {}),
+  }
+})
 
 const nodeStyle = computed(() => {
   const pillRadius = '9999px'
@@ -72,13 +86,14 @@ const nodeStyle = computed(() => {
       backgroundColor,
       color: props.data.style?.textColor || defaultStyle.value.textColor || '#000000',
       fontFamily: props.data.style?.fontFamily || DIAGRAM_NODE_FONT_STACK,
-      fontSize: `${props.data.style?.fontSize || defaultStyle.value.fontSize || 18}px`,
+      fontSize: `${props.data.style?.fontSize || 30}px`,
       fontWeight: props.data.style?.fontWeight || defaultStyle.value.fontWeight || 'bold',
       fontStyle: props.data.style?.fontStyle || 'normal',
       textDecoration: props.data.style?.textDecoration || 'none',
       ...getBorderStyleProps(borderColor, borderWidth, borderStyle, {
         backgroundColor,
       }),
+      ...dimensionStyle.value,
       borderRadius: pillRadius,
       boxShadow: '0 2px 6px rgba(0, 0, 0, 0.08)',
     }
@@ -99,6 +114,7 @@ const nodeStyle = computed(() => {
     ...getBorderStyleProps(borderColor, borderWidth, borderStyle, {
       backgroundColor,
     }),
+    ...dimensionStyle.value,
     borderRadius: pillRadius,
     boxShadow: '0 2px 6px rgba(0, 0, 0, 0.08)',
   }

@@ -14,6 +14,10 @@ import type { Connection, DiagramNode } from '@/types'
 
 import type { SpecLoaderResult } from './types'
 
+const CONCEPT_MAP_TOPIC_WIDTH = 760
+const CONCEPT_MAP_TOPIC_HEIGHT = 104
+const CONCEPT_MAP_TOPIC_FONT_SIZE = 30
+
 const CONCEPT_RING_RADIUS = 150
 const HIERARCHY_VERTICAL_GAP = 120
 const HIERARCHY_HORIZONTAL_GAP = 200
@@ -42,7 +46,7 @@ function computeHierarchicalPositions(
   const topicY = DEFAULT_PADDING + 40
 
   positions.set('topic', {
-    x: DEFAULT_CENTER_X - halfWidth,
+    x: DEFAULT_CENTER_X - CONCEPT_MAP_TOPIC_WIDTH / 2,
     y: topicY,
   })
 
@@ -128,8 +132,14 @@ export function loadConceptMapSpec(spec: Record<string, unknown>): SpecLoaderRes
     text: topicText,
     type: 'topic',
     position: {
-      x: DEFAULT_CENTER_X - DEFAULT_NODE_WIDTH / 2,
+      x: DEFAULT_CENTER_X - CONCEPT_MAP_TOPIC_WIDTH / 2,
       y: DEFAULT_PADDING + 40,
+    },
+    style: {
+      width: CONCEPT_MAP_TOPIC_WIDTH,
+      height: CONCEPT_MAP_TOPIC_HEIGHT,
+      fontSize: CONCEPT_MAP_TOPIC_FONT_SIZE,
+      fontWeight: 'bold',
     },
   })
 

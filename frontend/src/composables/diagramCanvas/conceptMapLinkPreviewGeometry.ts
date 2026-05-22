@@ -1,7 +1,7 @@
 import { Position } from '@vue-flow/core'
 
-export const TOPIC_NODE_WIDTH = 120
-export const TOPIC_NODE_HEIGHT = 50
+export const TOPIC_NODE_WIDTH = 760
+export const TOPIC_NODE_HEIGHT = 104
 export const CONCEPT_NODE_WIDTH = 120
 export const CONCEPT_NODE_HEIGHT = 50
 /** Mind map branch-move drop preview sizing (matches topic vs branch defaults). */

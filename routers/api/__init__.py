@@ -34,6 +34,8 @@ from . import (
     image_proxy,
     diagrams,
     workshop_ws,
+    concept_map_image_focus,
+    concept_map_text_generation,
 )
 from . import config
 
@@ -79,6 +81,8 @@ router.include_router(image_proxy.router)
 router.include_router(diagrams.router)
 router.include_router(diagram_node_ops.router)
 router.include_router(workshop_ws.router)
+router.include_router(concept_map_image_focus.router)
+router.include_router(concept_map_text_generation.router)
 
 # Knowledge Space router (has its own prefix)
 if KNOWLEDGE_SPACE_MODULE is not None:

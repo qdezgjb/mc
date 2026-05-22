@@ -8,10 +8,18 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { useLanguage, useMindMate, useNotifications } from '@/composables'
+import { extractFocusQuestionFromImages } from '@/composables/conceptMap/useConceptMapImageFocus'
 import { eventBus } from '@/composables/core/useEventBus'
 import type { FeedbackRating } from '@/composables/mindmate/useMindMate'
 import { useConversations, usePinnedConversations } from '@/composables/queries'
-import { useAuthStore, useDiagramStore, useMindMateStore, useUIStore } from '@/stores'
+import {
+  CONCEPT_MAP_UPLOAD_ACCEPT,
+  useAuthStore,
+  useConceptMapFileUploadStore,
+  useDiagramStore,
+  useMindMateStore,
+  useUIStore,
+} from '@/stores'
 import { stripAnyFocusQuestionLabel } from '@/stores/diagram/diagramDefaultLabels'
 
 import ShareExportModal from './ShareExportModal.vue'
@@ -53,6 +61,26 @@ const notify = useNotifications()
 const authStore = useAuthStore()
 const mindMateStore = useMindMateStore()
 const diagramStore = useDiagramStore()
+const conceptMapFileStore = useConceptMapFileUploadStore()
+
+/**
+ * 概念图素材上传模式：仅在画布迷你 MindMate（panel 模式）+ 概念图类型下启用。
+ *
+ * 双投递语义：上传的文件既会作为 MindMate 聊天附件随下一条消息发出（让 MindMate
+ * 立刻能看到/分析），也会同步复制到 conceptMapFileStore，作为后续"概念图生成"
+ * 流程的素材库（即使 MindMate 发送时清空了聊天通道的附件，素材库依然保留）。
+ */
+const isConceptMapUploadMode = computed(
+  () => props.mode === 'panel' && diagramStore.type === 'concept_map'
+)
+
+/** 输入框是否显示上传按钮：MindMate 全屏页保持原有逻辑；概念图画布迷你面板新增显示。 */
+const showInputFileUpload = computed(() => isFullpageMode.value || isConceptMapUploadMode.value)
+
+/** 上传按钮 accept 范围：概念图素材支持图片+常见文档；MindMate 普通聊天保持只接图片。 */
+const inputAcceptTypes = computed(() =>
+  isConceptMapUploadMode.value ? CONCEPT_MAP_UPLOAD_ACCEPT : 'image/*'
+)
 
 // Typing effect state
 const displayTitle = ref('MindMate')
@@ -68,6 +96,24 @@ const mindMate = useMindMate({
     animateTitleChange(title, oldTitle)
   },
 })
+
+/**
+ * 输入框下方"待发送文件"chip 列表统一来自 MindMate 聊天通道：
+ * - 文件上传后立刻进入 mindMate.pendingFiles，chip 立刻显示
+ * - 用户点发送时，文件作为附件随消息发给 MindMate（mindMate 内部会清空 pendingFiles）
+ * - 概念图素材通道（conceptMapFileStore）在后台镜像保留，发送 MindMate 不会清空它
+ */
+// 概念图模式下：素材文件通道是 conceptMapFileStore（本地直传，不上 Dify），
+// MindMate 聊天通道在概念图模式下是空的（避免冗余上传到 Dify 阻塞 7-60s）。
+// 普通 MindMate 聊天模式：仍然走 mindMate 通道。
+const inputPendingFiles = computed(() =>
+  isConceptMapUploadMode.value ? conceptMapFileStore.pendingFiles : mindMate.pendingFiles.value
+)
+
+/** 输入框 loading 圈：与 inputPendingFiles 数据源对齐。 */
+const inputIsUploading = computed(() =>
+  isConceptMapUploadMode.value ? conceptMapFileStore.isUploading : mindMate.isUploading.value
+)
 
 // Local state
 const inputText = ref('')
@@ -264,18 +310,158 @@ function extractFocusQuestionFromIntent(input: string): string | null {
   return q
 }
 
+/** 当前 pendingFiles 中是否有概念图素材（用于触发"上传文件生成概念图"分支）。 */
+function getPendingUploadFileIds(): string[] {
+  // 概念图模式下从素材通道（本地直传）取，普通模式从 MindMate 聊天通道取。
+  const files = isConceptMapUploadMode.value
+    ? conceptMapFileStore.pendingFiles
+    : mindMate.pendingFiles.value
+  return files.filter((f) => !!f.id).map((f) => f.id)
+}
+
+/**
+ * 把概念图素材通道里挂载的 base64 data URL 取出来，按 file_id 顺序对齐。
+ * 仅返回有 data_url 的那部分（缺失 base64 的图会回退到 Dify 反向下载兜底）。
+ */
+function getPendingFileDataUrlsByIds(fileIds: string[]): string[] {
+  const map = new Map<string, string>()
+  for (const f of conceptMapFileStore.pendingFiles) {
+    if (f.data_url) map.set(f.id, f.data_url)
+  }
+  const out: string[] = []
+  for (const fid of fileIds) {
+    const url = map.get(fid)
+    if (url) out.push(url)
+  }
+  return out
+}
+
+function getPendingFileNamesByIds(fileIds: string[]): string[] {
+  const map = new Map<string, string>()
+  for (const f of conceptMapFileStore.pendingFiles) {
+    map.set(f.id, f.name)
+  }
+  return fileIds.map((fid) => map.get(fid) || fid)
+}
+
+/** 用户输入是否为"生成概念图"意图（必须明确出现"概念图"关键字）。 */
+function isConceptMapGenerationIntent(message: string): boolean {
+  const text = (message || '').trim()
+  if (!text) return false
+  return /概念图|concept[\s-]*map/i.test(text)
+}
+
+/**
+ * 把图片素材通过后端 Qwen-VL 接口提炼成"问句焦点问题"，再走标准生成流程。
+ *
+ * 期间会推一条临时的 assistant"读图中..."消息让用户感知到等待原因。
+ * 失败时占位消息会被撤掉，让上层调用方按 false 兜底走 mindMate.sendMessage，
+ * 由 mindMate 自身负责 push 含附件的用户消息（避免重复 push）。
+ */
+async function triggerConceptMapGenerationFromImages(
+  message: string,
+  uploadFileIds: string[]
+): Promise<boolean> {
+  const fileDataUrls = getPendingFileDataUrlsByIds(uploadFileIds)
+  const fileNames = getPendingFileNamesByIds(uploadFileIds)
+  const messageFiles = isConceptMapUploadMode.value
+    ? conceptMapFileStore.detachPendingFiles()
+    : [...mindMate.pendingFiles.value]
+  mindMate.messages.value.push({
+    id: `user_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    role: 'user',
+    content: message,
+    timestamp: Date.now(),
+    files: messageFiles,
+  })
+
+  // 推一条临时 assistant 消息提示"读图中"，便于用户感知耗时来源；
+  // 注意此处不主动 push 用户消息——失败时让 mindMate.sendMessage 完整走流程，
+  // 成功时由 CanvasToolbar 触发的 'mindmate:send_message' 路径展示原话。
+  const placeholderId = `assistant_pending_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+  mindMate.messages.value.push({
+    id: placeholderId,
+    role: 'assistant',
+    content: t('conceptMapImage.analyzingImageForFocusQuestion'),
+    timestamp: Date.now(),
+    isStreaming: true,
+  })
+
+  // 优先用本地 base64（避开 Dify /files/{id}/preview 在文件未参与 chat 上下文时的 404）；
+  // 缺失 base64 的部分仍把 file_id 传过去，后端会兜底再尝试 Dify 下载。
+  let result
+  try {
+    result = await extractFocusQuestionFromImages({
+      fileIds: uploadFileIds,
+      fileDataUrls,
+      fileNames,
+      userMessage: message,
+      language: promptLanguage.value || 'zh',
+    })
+  } finally {
+    // 不论成功失败都移除占位消息
+    mindMate.messages.value = mindMate.messages.value.filter((m) => m.id !== placeholderId)
+  }
+
+  if (!result.success || !result.question) {
+    notify.error(
+      `${t('conceptMapImage.imageFocusQuestionExtractFailed')}${result.error ? `: ${result.error}` : ''}`
+    )
+    return true
+  }
+
+  // 已成功 → 清空 chip 与概念图素材通道（图已经被消耗，避免下次重复使用）
+  // 概念图模式下 mindMate.pendingFiles 本就为空，调 clearPendingFiles 也是 no-op；保留兼容。
+  mindMate.clearPendingFiles()
+
+  // 通过 eventBus 通知 CanvasToolbar：写入焦点问题框 + 触发生成。
+  // originalMessage 传一段"基于图片生成"提示，仅作 fallback 兜底；
+  // 因为 userMessageAlreadyShown=true，下游 silent=true，displayMessage 不会被使用。
+  // imageContext 是从图片里 OCR/识别出的关键文本/术语/关系，CanvasToolbar 会
+  // 把它作为「参考素材」段拼到生成 prompt 末尾，让 LLM 优先基于图片实际内容
+  // 组织节点；图里没有的方面再用模型常识补充。
+  // userMessageAlreadyShown=true：上面已经手动 push 了一条 user 气泡（原话+files），
+  // 让 useMindMate 在收到 'mindmate:send_message' 时不再重复 push 第二条气泡。
+  eventBus.emit('concept_map:focus_question_generation_requested', {
+    question: result.question,
+    originalMessage: t('conceptMapImage.generateFromImageWithFocusQuestion', {
+      question: result.question,
+    }),
+    imageContext: (result.imageContent || '').trim() || undefined,
+    userMessageAlreadyShown: true,
+  })
+  return true
+}
+
 /**
  * 在画布的迷你 MindMate 面板里，若识别到"生成概念图"意图，
- * 则把用户给的焦点问题写入画布顶部的"焦点问题"框，并触发已有的生成流程。
+ * 则把焦点问题写入画布顶部的"焦点问题"框，并触发已有的生成流程。
+ *
+ * 优先级：
+ *   1) 当前 pendingFiles 里有图片 → 调 Qwen-VL 提取问句式焦点问题
+ *   2) 否则按用户输入做"焦点问题"剥离（原有逻辑）
  *
  * @returns 是否成功拦截并触发生成（true 时调用方应跳过普通的发送逻辑）
  */
-function tryTriggerConceptMapGeneration(message: string): boolean {
+async function tryTriggerConceptMapGeneration(message: string): Promise<boolean> {
   // 只在画布的迷你 MindMate（panel 模式）+ 概念图类型下生效；
   // 在独立的 MindMate 全屏页（fullpage 模式）保持原有问答行为。
   if (props.mode !== 'panel') return false
   if (diagramStore.type !== 'concept_map') return false
 
+  // 必须明确提到"概念图"关键字，避免误判
+  if (!isConceptMapGenerationIntent(message)) return false
+
+  // 分支 A：当前有图片 → 走"图片提取焦点问题"流程
+  const uploadFileIds = getPendingUploadFileIds()
+  if (uploadFileIds.length > 0) {
+    const ok = await triggerConceptMapGenerationFromImages(message, uploadFileIds)
+    if (ok) return true
+    // 图片提取失败 → 不再尝试文字解析路径，让消息原样发给 MindMate（避免误生成）
+    return false
+  }
+
+  // 分支 B：无图片 → 按文字意图剥离焦点问题
   const question = extractFocusQuestionFromIntent(message)
   if (!question) return false
 
@@ -292,14 +478,14 @@ function tryTriggerConceptMapGeneration(message: string): boolean {
 
 // Send message using composable
 async function sendMessage() {
-  if ((!inputText.value.trim() && mindMate.pendingFiles.value.length === 0) || isLoading.value)
+  if ((!inputText.value.trim() && inputPendingFiles.value.length === 0) || isLoading.value)
     return
 
   const message = inputText.value.trim()
   inputText.value = ''
 
   // 识别"根据焦点问题生成概念图"意图：先把焦点问题写入画布顶部，再触发生成流程
-  if (tryTriggerConceptMapGeneration(message)) {
+  if (await tryTriggerConceptMapGeneration(message)) {
     return
   }
 
@@ -315,12 +501,32 @@ function handleSuggestionSelect(suggestion: string) {
   })
 }
 
-// Handle file selection
+// 处理文件选择：
+// - 普通 MindMate：仅上传到 MindMate 聊天通道（与历史行为一致）。
+// - 概念图模式：**完全跳过 Dify 上传**（避免 242KB ~ 7s、1MB ~ 60s 的跨境网络等待）。
+//   走 conceptMapFileStore.addLocalFile：浏览器本地读 base64 + 即时显示缩略图（< 200ms），
+//   id 用 `local_<rand>` 与真 Dify file id 区分。后续概念图生成完全走 base64 通道
+//   （concept_map_image_focus.py 第 339-355 行的 images_base64 优先逻辑），
+//   不依赖 Dify file_id。
+// - 普通 MindMate 聊天模式：保持原行为，上传到 Dify 拿 file_id（聊天附件需要它）。
 async function handleFileSelect(files: FileList) {
   if (!files || files.length === 0) return
 
   for (const file of Array.from(files)) {
-    await mindMate.uploadFile(file)
+    if (isConceptMapUploadMode.value) {
+      await conceptMapFileStore.addLocalFile(file)
+    } else {
+      await mindMate.uploadFile(file)
+    }
+  }
+}
+
+// 移除待用文件：根据当前模式从对应通道删除。
+function handleRemoveFile(fileId: string) {
+  if (isConceptMapUploadMode.value) {
+    conceptMapFileStore.removeFile(fileId)
+  } else {
+    mindMate.removeFile(fileId)
   }
 }
 
@@ -490,14 +696,15 @@ function isLastAssistantMessage(messageId: string): boolean {
         :mode="mode"
         :is-loading="isLoading"
         :is-streaming="mindMate.isStreaming.value"
-        :is-uploading="mindMate.isUploading.value"
-        :pending-files="mindMate.pendingFiles.value"
+        :is-uploading="inputIsUploading"
+        :pending-files="inputPendingFiles"
         :show-suggestions="showWelcome"
-        :show-file-upload="isFullpageMode"
+        :show-file-upload="showInputFileUpload"
+        :accept-types="inputAcceptTypes"
         @send="sendMessage"
         @stop="stopGeneration"
         @upload="handleFileSelect"
-        @remove-file="mindMate.removeFile"
+        @remove-file="handleRemoveFile"
         @suggestion-select="handleSuggestionSelect"
       />
     </div>

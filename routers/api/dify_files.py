@@ -11,12 +11,13 @@ Proprietary License
 """
 
 from typing import Optional
+import asyncio
 import logging
 import os
 
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 
-from clients.dify import AsyncDifyClient
+from clients.dify import AsyncDifyClient, DifyAPIError
 from models import Messages, get_request_language
 from models.domain.auth import User
 from utils.auth import get_current_user_or_api_key
@@ -109,9 +110,36 @@ async def upload_file_to_dify(
 
     except HTTPException:
         raise
+    except asyncio.TimeoutError as e:
+        # aiohttp ClientTimeout(total=DIFY_TIMEOUT) 触发；str(e) 通常为空，前端只会看到"Upload failed"。
+        # 这里给出明确提示，引导排查 .env 中 DIFY_TIMEOUT 是否过小，或 Dify 服务/网络是否慢。
+        timeout_seconds = int(os.getenv("DIFY_TIMEOUT", "300"))
+        logger.error(
+            "Dify upload timeout after %ss for file %s (%s bytes)",
+            timeout_seconds,
+            file.filename,
+            file_size,
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"Dify file upload timeout (>{timeout_seconds}s). "
+                f"File: {file.filename} ({file_size / 1024:.1f}KB). "
+                f"Try a smaller file, or raise DIFY_TIMEOUT in .env."
+            ),
+        ) from e
+    except DifyAPIError as e:
+        logger.error("Dify upload API error (status=%s): %s", e.status_code, e)
+        raise HTTPException(
+            status_code=e.status_code or 502,
+            detail=str(e) or f"Dify API error (HTTP {e.status_code})",
+        ) from e
     except Exception as e:
-        logger.error("Dify upload error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.error("Dify upload error: %r", e)
+        raise HTTPException(
+            status_code=500,
+            detail=str(e) or f"Upload failed: {type(e).__name__}",
+        ) from e
 
 
 @router.get("/dify/app/parameters")

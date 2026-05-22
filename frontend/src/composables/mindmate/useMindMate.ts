@@ -272,14 +272,8 @@ export function useMindMate(options: MindMateOptions = {}) {
   }
 
   async function uploadFile(file: File): Promise<MindMateFile | null> {
-    // Only allow image files
-    if (!file.type.startsWith('image/')) {
-      const errorMsg = 'Only image files are allowed'
-      eventBus.emit('mindmate:error', { error: errorMsg })
-      onError?.(errorMsg)
-      return null
-    }
-
+    // 后端 /api/dify/files/upload 已支持图片+文档+音视频；
+    // 前端不再硬性限制为图片，由调用方通过 input 的 accept 决定允许范围。
     isUploading.value = true
 
     try {
@@ -355,10 +349,28 @@ export function useMindMate(options: MindMateOptions = {}) {
   // SSE Streaming
   // =========================================================================
 
+  /**
+   * 发送一条消息并接收流式回复。
+   *
+   * 默认行为：POST /api/ai_assistant/stream（走 Dify chatflow），与历史一致。
+   *
+   * options.endpointOverride 用于"概念图教学设计生成"场景：
+   *   Dify chatflow 内的 JSON 抽取节点和概念图"纯文本输出"prompt 直接冲突
+   *   （Dify 报 "Run failed: could not find json block in the output."）。
+   *   传入 endpointOverride 后，本方法会改用该 URL 直接 POST，绕开 Dify；
+   *   options.extraBody 为完整请求体（不再附带 user_id/conversation_id/files），
+   *   由调用方负责构造与目标接口匹配的字段。
+   *   目标接口必须按 SSE 协议返回与 Dify 兼容的 message / message_end / error
+   *   事件，本方法的 handleStreamEvent 会复用同一套处理逻辑。
+   */
   async function sendMessage(
     message: string,
     showUserMessage = true,
-    displayMessage?: string
+    displayMessage?: string,
+    options?: {
+      endpointOverride?: string
+      extraBody?: Record<string, unknown>
+    }
   ): Promise<void> {
     if (!message.trim() && pendingFiles.value.length === 0) return
 
@@ -405,24 +417,33 @@ export function useMindMate(options: MindMateOptions = {}) {
     eventBus.emit('mindmate:message_sending', { message, files: filesToSend })
 
     try {
-      // Build request with files
-      const requestBody: Record<string, unknown> = {
-        message: message || (filesToSend.length > 0 ? 'Please analyze this file.' : ''),
-        user_id: userId.value,
-        conversation_id: conversationId.value,
-      }
+      // Build request body and target endpoint.
+      // 默认走 Dify 通道（/api/ai_assistant/stream），保持与历史完全一致；
+      // 仅当调用方传入 endpointOverride（目前只有 CanvasToolbar 概念图生成）
+      // 时改走自家流式接口，且 body 完全由 extraBody 决定。
+      const endpoint = options?.endpointOverride || '/api/ai_assistant/stream'
+      let requestBody: Record<string, unknown>
 
-      // Add files in Dify format
-      if (filesToSend.length > 0) {
-        requestBody.files = filesToSend.map((f) => ({
-          type: f.type,
-          transfer_method: 'local_file',
-          upload_file_id: f.id,
-        }))
+      if (options?.endpointOverride) {
+        requestBody = options.extraBody ?? { message }
+      } else {
+        requestBody = {
+          message: message || (filesToSend.length > 0 ? 'Please analyze this file.' : ''),
+          user_id: userId.value,
+          conversation_id: conversationId.value,
+        }
+        // Add files in Dify format
+        if (filesToSend.length > 0) {
+          requestBody.files = filesToSend.map((f) => ({
+            type: f.type,
+            transfer_method: 'local_file',
+            upload_file_id: f.id,
+          }))
+        }
       }
 
       // Use fetch with credentials (token in httpOnly cookie)
-      const response = await fetch('/api/ai_assistant/stream', {
+      const response = await fetch(endpoint, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -906,12 +927,26 @@ export function useMindMate(options: MindMateOptions = {}) {
   // EventBus Subscriptions
   // =========================================================================
 
-  // Listen for send message requests (from voice agent)
+  // Listen for send message requests (from voice agent / canvas toolbar)
   eventBus.onWithOwner(
     'mindmate:send_message',
     (data) => {
       if (data.message) {
-        sendMessage(data.message as string, true, data.displayMessage as string | undefined)
+        // silent=true：上层已经自己 push 了用户消息（例如图片提取焦点问题路径），
+        // 不再让 sendMessage 重复 push 第二条 user 气泡。
+        const silent = (data as { silent?: boolean }).silent === true
+        // endpoint / extraBody：仅"概念图生成"路径会传，用于绕开 Dify、走自家
+        // 流式接口。其它场景（普通对话、其它图示）保持 endpoint=undefined，
+        // sendMessage 内部会沿用默认的 /api/ai_assistant/stream + Dify 行为。
+        const endpoint = (data as { endpoint?: string }).endpoint
+        const extraBody = (data as { extraBody?: Record<string, unknown> }).extraBody
+        const hasOverride = Boolean(endpoint) || extraBody !== undefined
+        sendMessage(
+          data.message as string,
+          !silent,
+          data.displayMessage as string | undefined,
+          hasOverride ? { endpointOverride: endpoint, extraBody } : undefined
+        )
       }
     },
     ownerId

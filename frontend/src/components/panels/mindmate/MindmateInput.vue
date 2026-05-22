@@ -28,6 +28,20 @@ const props = withDefaults(
     placeholder?: string
     /** Max length for input (e.g. 1000 for comments) */
     maxlength?: number
+    /**
+     * 上传按钮的 accept 类型；默认为图片。概念图素材上传场景会覆盖为
+     * 图片+常见文档类型（PDF/DOC/TXT/MD 等）。
+     */
+    acceptTypes?: string
+    /** 上传按钮的 tooltip 文案 i18n key（不传则使用默认 mindmate.input.attachFile） */
+    attachTooltipKey?: string
+    /**
+     * pendingFiles 是否影响发送按钮启用状态。
+     * - 默认 true：与历史行为一致，光有附件即可点发送（用于 MindMate 聊天附件）。
+     * - 概念图素材上传场景传 false：素材文件不参与 MindMate 发送判定，
+     *   避免出现"按钮可点但点了没反应"的尴尬交互。
+     */
+    pendingFilesAttachToSend?: boolean
   }>(),
   {
     mode: 'panel',
@@ -40,6 +54,9 @@ const props = withDefaults(
     showFileUpload: true,
     placeholder: '',
     maxlength: undefined,
+    acceptTypes: 'image/*',
+    attachTooltipKey: '',
+    pendingFilesAttachToSend: true,
   }
 )
 
@@ -59,8 +76,9 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 
 // Computed for send button disabled state
 const isSendDisabled = computed(() => {
-  const hasContent =
-    props.inputText.trim() || (props.showFileUpload && props.pendingFiles.length > 0)
+  const hasFilesForSend =
+    props.showFileUpload && props.pendingFilesAttachToSend && props.pendingFiles.length > 0
+  const hasContent = props.inputText.trim() || hasFilesForSend
   return !hasContent || props.isLoading || !authStore.isAuthenticated
 })
 
@@ -89,9 +107,14 @@ function triggerFileUpload() {
   fileInputRef.value?.click()
 }
 
-// Handle file selection - only images allowed
+// 上传按钮 tooltip 文案：默认沿用历史的 attachFile，调用方可自定义
+const attachTooltipText = computed(() =>
+  props.attachTooltipKey ? t(props.attachTooltipKey) : t('mindmate.input.attachFile')
+)
+
+// 处理文件选择：accept 已经在原生层做过过滤，这里不再硬性限制类型，
+// 让 props.acceptTypes 决定允许范围（默认仍为图片）。
 function handleFileSelect(event: Event) {
-  // Check authentication before allowing file upload
   if (!authStore.isAuthenticated) {
     const input = event.target as HTMLInputElement
     input.value = ''
@@ -103,22 +126,7 @@ function handleFileSelect(event: Event) {
   const files = input.files
   if (!files || files.length === 0) return
 
-  // Filter to only image files
-  const imageFiles = Array.from(files).filter((file) => file.type.startsWith('image/'))
-
-  if (imageFiles.length === 0) {
-    // No valid images selected
-    console.warn('Only image files are allowed')
-    input.value = ''
-    return
-  }
-
-  // Create a new FileList-like object with only images
-  const dataTransfer = new DataTransfer()
-  imageFiles.forEach((file) => dataTransfer.items.add(file))
-
-  emit('upload', dataTransfer.files)
-  // Reset input
+  emit('upload', files)
   input.value = ''
 }
 
@@ -190,9 +198,9 @@ function handleSuggestionSelect(suggestion: string) {
         type="file"
         class="hidden"
         name="mindmate-file-input"
-        accept="image/*"
+        :accept="acceptTypes"
         multiple
-        :aria-label="t('mindmate.input.attachFile')"
+        :aria-label="attachTooltipText"
         @change="handleFileSelect"
       />
 
@@ -253,7 +261,7 @@ function handleSuggestionSelect(suggestion: string) {
           <!-- Upload Button (Paperclip) - hidden when showFileUpload is false -->
           <ElTooltip
             v-if="showFileUpload"
-            :content="t('mindmate.input.attachFile')"
+            :content="attachTooltipText"
           >
             <ElButton
               text

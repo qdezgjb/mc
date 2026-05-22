@@ -125,10 +125,20 @@ export type EventTypes = {
    * - question 为空时：直接使用画布当前的焦点问题走标准生成流程（等价于工具栏按钮）。
    * - originalMessage 为可选：当从 MindMate 聊天面板发起时，用于在聊天历史里
    *   展示用户的原话，而不是 i18n 模板替换后的固定句式。
+   * - imageContext 为可选：当焦点问题来自"用户上传图片 → Qwen-VL 提取"时，会
+   *   一并附带从图片中识别出的关键文本/术语/关系。CanvasToolbar 会把它作为
+   *   "参考素材"段拼到生成 prompt 末尾，让 LLM 优先基于图片实际内容组织节点，
+   *   素材不足时再用模型常识补充。
+   * - userMessageAlreadyShown 为可选：emit 端（如 MindmatePanel）若已自行
+   *   push 用户气泡（用户原话 + 文件 chip）到 mindMate.messages，应置为 true。
+   *   CanvasToolbar 会在向 useMindMate 转发 'mindmate:send_message' 时附带
+   *   silent=true，避免重复 push 第二条用户气泡。
    */
   'concept_map:focus_question_generation_requested': {
     question?: string
     originalMessage?: string
+    imageContext?: string
+    userMessageAlreadyShown?: boolean
   }
   'diagram:update_requested': {
     updates?: unknown
@@ -281,7 +291,30 @@ export type EventTypes = {
   // MindMate Events
   'mindmate:opened': { diagramSessionId?: string }
   'mindmate:closed': Record<string, never>
-  'mindmate:send_message': { message: string; displayMessage?: string }
+  /**
+   * 触发 MindMate 实际发送一次消息。
+   * - message：发送给 LLM 的完整 prompt（可能含模板/参考素材）
+   * - displayMessage：可选，覆盖聊天里展示的"用户消息"内容（仅 silent=false 时生效）
+   * - silent：true 表示**不再**额外 push 一条用户消息到聊天历史。用于上层
+   *   已经自行 push 了用户原话（例如图片提取焦点问题路径），避免聊天里出现
+   *   两条重复的用户气泡。pendingFiles 也由调用方负责清理。
+   * - endpoint：可选，覆盖默认 SSE 端点 /api/ai_assistant/stream（Dify 通道）。
+   *   传值后 useMindMate 会改用此 URL 直接 POST，**完全绕开 Dify**。
+   *   目前仅用于"概念图教学设计生成"——Dify chatflow 内的 JSON 抽取节点
+   *   与概念图 prompt 的"纯文本输出"要求冲突，必须走自家 LLM 流式接口。
+   *   端点必须按 SSE 协议返回与 Dify 兼容的 message / message_end / error 事件，
+   *   useMindMate 复用同一套 handleStreamEvent 处理。
+   * - extraBody：当 endpoint 被指定时，**完全替换**默认 body
+   *   （不再附带 user_id / conversation_id / files）。调用方负责构造与
+   *   目标接口匹配的请求体。
+   */
+  'mindmate:send_message': {
+    message: string
+    displayMessage?: string
+    silent?: boolean
+    endpoint?: string
+    extraBody?: Record<string, unknown>
+  }
   'mindmate:message_sending': { message: string; files?: unknown[] }
   'mindmate:message_chunk': { chunk: string }
   'mindmate:message_completed': { conversationId?: string; answer?: string }

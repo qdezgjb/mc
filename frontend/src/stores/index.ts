@@ -7,6 +7,12 @@ export type { DiagramId } from '@/types'
 export { useConceptMapRelationshipStore } from './conceptMapRelationship'
 export { useConceptMapFocusReviewStore } from './conceptMapFocusReview'
 export { useConceptMapRootConceptReviewStore } from './conceptMapRootConceptReview'
+export {
+  useConceptMapFileUploadStore,
+  CONCEPT_MAP_UPLOAD_ACCEPT,
+  type ConceptMapUploadFile,
+  type ConceptMapUploadFileType,
+} from './conceptMapFileUpload'
 export { useInlineRecommendationsStore } from './inlineRecommendations'
 export {
   useDiagramStore,

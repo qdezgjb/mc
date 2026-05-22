@@ -149,6 +149,7 @@ export function diagramNodeToVueFlowNode(
   // For tree_map topic pill, measured width/height so long text stays inside the node
   const isTreeMapTopic =
     diagramType === 'tree_map' && node.type === 'topic' && node.style?.width != null
+  const isConceptMapStyledNode = diagramType === 'concept_map' && node.style?.width != null
   const nodeWidth =
     node.type === 'boundary'
       ? node.style?.width
@@ -158,7 +159,9 @@ export function diagramNodeToVueFlowNode(
           ? node.style.width
           : isTreeMapTopic
             ? node.style?.width
-            : undefined
+            : isConceptMapStyledNode
+              ? node.style?.width
+              : undefined
   const nodeHeight =
     node.type === 'boundary'
       ? node.style?.height
@@ -166,7 +169,9 @@ export function diagramNodeToVueFlowNode(
         ? node.style.height
         : isTreeMapTopic && node.style?.height != null
           ? node.style.height
-          : undefined
+          : isConceptMapStyledNode && node.style?.height != null
+            ? node.style.height
+            : undefined
 
   // Preserve custom data fields from node.data (like pairIndex, position for bridge maps)
   const customData = node.data || {}

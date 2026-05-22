@@ -11,6 +11,10 @@ import { computed, ref } from 'vue'
 import { useLanguage } from '@/composables/core/useLanguage'
 import type { Connection, DiagramNode, MindGraphEdge, MindGraphNode } from '@/types'
 
+const CONCEPT_MAP_TOPIC_WIDTH = 760
+const CONCEPT_MAP_TOPIC_HEIGHT = 104
+const CONCEPT_MAP_TOPIC_FONT_SIZE = 30
+
 interface ConceptNode {
   id: string
   text: string
@@ -68,6 +72,12 @@ export function useConceptMap(options: ConceptMapOptions = {}) {
           label: data.value.topic,
           nodeType: 'topic',
           diagramType: 'concept_map',
+          style: {
+            width: CONCEPT_MAP_TOPIC_WIDTH,
+            height: CONCEPT_MAP_TOPIC_HEIGHT,
+            fontSize: CONCEPT_MAP_TOPIC_FONT_SIZE,
+            fontWeight: 'bold',
+          },
           isDraggable: true,
           isSelectable: true,
         },

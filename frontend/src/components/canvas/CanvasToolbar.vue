@@ -38,6 +38,34 @@ import CanvasToolbarTextDropdown from './CanvasToolbarTextDropdown.vue'
 import CanvasToolbarUndoRedo from './CanvasToolbarUndoRedo.vue'
 import CanvasVirtualKeyboardPanel from './CanvasVirtualKeyboardPanel.vue'
 
+function estimateGeneratedConceptNodeWidth(text: string): number {
+  const plain = String(text || '').replace(/\s+/gu, '').trim()
+  const chars = Array.from(plain)
+  const cjkCount = chars.filter((ch) => /[\u4e00-\u9fff]/u.test(ch)).length
+  const otherCount = Math.max(0, chars.length - cjkCount)
+  const estimated = 90 + cjkCount * 19 + otherCount * 12
+  return Math.max(220, Math.min(estimated, 420))
+}
+
+function getGeneratedConceptNodeStyle(level: 1 | 2 | 3 | 4 | 5, text: string) {
+  const isMajor = level <= 2
+  return {
+    width: estimateGeneratedConceptNodeWidth(text),
+    height: isMajor ? 78 : 70,
+    fontSize: isMajor ? 24 : 22,
+    fontWeight: isMajor ? 'bold' : 'normal',
+  } as const
+}
+
+function getConceptMapFocusQuestionStyle() {
+  return {
+    width: 760,
+    height: 104,
+    fontSize: 30,
+    fontWeight: 'bold',
+  } as const
+}
+
 /**
  * When true, flatter styles for use inside CanvasTopBar (single merged chrome row).
  * When embedded, `compactToolbar` is driven by CanvasTopBar (two-tier bar width breakpoints).
@@ -47,7 +75,7 @@ const props = withDefaults(defineProps<{ embedded?: boolean; compactToolbar?: bo
   compactToolbar: false,
 })
 
-const { t } = useLanguage()
+const { t, promptLanguage } = useLanguage()
 const notify = useNotifications()
 
 const diagramStore = useDiagramStore()
@@ -221,7 +249,13 @@ async function buildConceptHierarchyFromAnswer(
   removeNodeAndEdges('root')
 
   // 按层分组，实现从上到下的"逐层、逐个"生成
-  const byLevel: Record<1 | 2 | 3 | 4, typeof layout.nodes> = { 1: [], 2: [], 3: [], 4: [] }
+  const byLevel: Record<1 | 2 | 3 | 4 | 5, typeof layout.nodes> = {
+    1: [],
+    2: [],
+    3: [],
+    4: [],
+    5: [],
+  }
   for (const n of layout.nodes) {
     byLevel[n.level].push(n)
   }
@@ -235,7 +269,7 @@ async function buildConceptHierarchyFromAnswer(
   const LEVEL_SETTLE_DELAY = 450 // 一层绘制完成后等待 DOM 稳定再自适应
   const FIT_ANIM_WAIT = 500 // 等待自适应动画完成，避免与下一层重叠
 
-  for (const level of [1, 2, 3, 4] as const) {
+  for (const level of [1, 2, 3, 4, 5] as const) {
     const nodes = byLevel[level]
     if (!nodes || nodes.length === 0) continue
 
@@ -247,6 +281,7 @@ async function buildConceptHierarchyFromAnswer(
         text: layoutNode.text,
         type: 'branch',
         position: layoutNode.position,
+        style: getGeneratedConceptNodeStyle(level, layoutNode.text),
       })
       // 紧随其后，把通向该节点的父子边补上；
       // level-3 → level-4 的边会带上连接词（动词）作为 label，
@@ -279,6 +314,21 @@ async function handleDiagramGeneration(opts?: {
    * - 工具栏按钮直接调用本函数时不传这个参数，沿用默认模板。
    */
   displayMessageOverride?: string
+  /**
+   * 可选的"图片素材"。
+   * - 当焦点问题来自"用户上传图片 → Qwen-VL 提取"时，会一并附带从图片中识别
+   *   出的关键文本/术语/关系。本函数会把它作为「参考素材」段拼到 prompt 末尾，
+   *   让 LLM 优先基于图片实际内容组织节点；图里没有的方面再用模型常识补充。
+   * - 仅当本次生成确实有图片素材时传入；否则不附加，prompt 形态与旧行为一致。
+   */
+  imageContextOverride?: string
+  /**
+   * 当上层（如 MindmatePanel 的图片路径）已经自行 push 了用户消息到 mindMate.messages，
+   * 这里 emit 'mindmate:send_message' 时应附加 silent=true，避免 sendMessage
+   * 在内部又 push 一条"基于图片生成概念图（焦点问题：xxx）"的重复气泡。
+   * 工具栏按钮直接调用时为 false，sendMessage 正常 push 用户气泡。
+   */
+  silentUserMessage?: boolean
 }): Promise<void> {
   if (!isConceptMap.value) return
 
@@ -288,7 +338,27 @@ async function handleDiagramGeneration(opts?: {
     return
   }
 
-  const prompt = t('canvas.toolbar.diagramGenerationPrompt', { question })
+  let prompt = t('canvas.toolbar.diagramGenerationPrompt', { question })
+  prompt = `${prompt}
+
+【本次层级深度覆盖要求】
+请把生成结果组织成 5 层可视化链条：焦点问题 → 根概念 → 方面 → 关键名词 → 说明节点 → 再展开节点。每一张图都必须出现第 5 层，不能只停在第 4 层。为保证画布能生成第 5 层，所有关键名词优先使用四段直角引号格式：
+「连接词B」【关键名词】『第一层动词』『第一层宾语』『第二层动词』『第二层宾语』
+其中『第一层动词』『第一层宾语』会生成第 4 层，『第二层动词』『第二层宾语』会继续生成第 5 层。节点文字要短但必须完整：方面标题 4-6 字，关键名词 4-8 字，两个宾语各 4-8 字；不要写长句，也绝对不要输出被截断的词（例如不要把“人工智能”写成“人工智”）。所有「连接词A/B」和两组『动词』都必须是真实连接词，不能留空，不能写“输入关系”“关系”“待补充”。`
+prompt = `${prompt}
+
+【第 5 层分支要求】
+第 5 层不要只给单一路径：约一半的第 4 层节点应能继续形成两个不同的末层分支，两个分支的含义要不同且都要短而完整；不要重复同一个词，也不要省略连接词。`
+
+  // 若本次有"图片素材"，作为参考资料追加到 prompt 末尾。
+  // 注意只 append，不替换原模板——保留原有的"4 条层级链 + 严格输出格式"约束。
+  const imageContext = (opts?.imageContextOverride || '').trim()
+  if (imageContext) {
+    const supplement = t('canvas.toolbar.diagramGenerationImageContext', {
+      imageContext,
+    })
+    prompt = `${prompt}\n\n${supplement}`
+  }
   // 优先使用调用方传入的"用户原话"，否则回退到 i18n 默认展示模板
   const overrideText = opts?.displayMessageOverride?.trim()
   const displayMessage =
@@ -351,8 +421,36 @@ async function handleDiagramGeneration(opts?: {
   await nextTick()
   await nextTick()
 
-  // message 为实际发送给 Dify 的完整提示词；displayMessage 为聊天界面展示的简短文本
-  eventBus.emit('mindmate:send_message', { message: prompt, displayMessage })
+  // message 为实际发送给 LLM 的完整提示词；displayMessage 为聊天界面展示的简短文本。
+  // silent=true 表示上层已自行 push 用户气泡（例如图片提取焦点问题路径），
+  // useMindMate 不再重复 push，避免聊天里出现两条用户消息。
+  const silent = opts?.silentUserMessage === true
+
+  // 概念图教学设计生成：必须**绕开 Dify**直接走自家 LLM 流式接口。
+  //
+  // 原因（实测稳定复现）：
+  //   /api/ai_assistant/stream 转发给 Dify chatflow，而 Dify 工作流里通常含
+  //   一个 JSON 抽取节点期望前序 LLM 输出 ```json...```；本 prompt 模板明确
+  //   要求"只返回纯文本，不要生成任何图示/JSON"，于是 LLM 老老实实输出
+  //   1.「连接词」…【名词】『动词』『宾语』… —— 没有任何 JSON 代码块，
+  //   Dify 抽取节点必然失败，回传 "Run failed: could not find json block in the output."。
+  //
+  // 解决方案：本入口（仅概念图）改走 /api/concept_map/generate-concept-map-text，
+  // 该后端接口直接调 llm_service.chat_stream，按 SSE 协议流式返回，
+  // 事件名（message / message_end / error）与 Dify 通道完全一致，
+  // useMindMate.handleStreamEvent 无需新增分支即可复用。
+  //
+  // 顶部 if (!isConceptMap.value) return 已挡掉非概念图调用，所以这里直接覆盖端点。
+  eventBus.emit('mindmate:send_message', {
+    message: prompt,
+    displayMessage,
+    silent,
+    endpoint: '/api/concept_map/generate-concept-map-text',
+    extraBody: {
+      prompt,
+      language: promptLanguage.value || 'zh',
+    },
+  })
 }
 
 function handleOpenMathInsert(): void {
@@ -418,6 +516,12 @@ onMounted(() => {
         typeof payload?.originalMessage === 'string'
           ? payload.originalMessage.trim()
           : ''
+      // 来自"图片提取"路径时，把从图中识别出的关键文本/术语透传给生成 prompt。
+      // 普通工具栏按钮触发时该字段为空，行为与旧逻辑完全一致。
+      const imageContext =
+        typeof payload?.imageContext === 'string'
+          ? payload.imageContext.trim()
+          : ''
       if (trimmed) {
         // 1) 强力剥离用户输入中所有可能的"焦点问题"前缀变体（中文冒号、英文
         //    冒号、不带冒号、连写多次等），得到一个干净的"纯"焦点问题文本。
@@ -428,7 +532,13 @@ onMounted(() => {
         //    与画布默认占位形态保持一致（用户在 UI 直接编辑也是 "焦点问题:xxx"）。
         const prefix = t('diagram.conceptMap.focusQuestionPrefix')
         const topicText = `${prefix}${pureQuestion}`
-        diagramStore.updateNode('topic', { text: topicText })
+        diagramStore.updateNode('topic', {
+          text: topicText,
+          style: {
+            ...(diagramStore.data?.nodes?.find((n) => n.id === 'topic')?.style || {}),
+            ...getConceptMapFocusQuestionStyle(),
+          },
+        })
 
         // 3) updateNode 内部会同步 data.focus_question = topicText（带前缀）。
         //    覆写为"纯"焦点问题，确保 LLM prompt 与根节点提取得到的都是无前缀文本。
@@ -439,8 +549,18 @@ onMounted(() => {
         await nextTick()
       }
 
-      // 把用户原话作为聊天展示文本透传下去，避免聊天里显示的是固定模板
-      await handleDiagramGeneration({ displayMessageOverride: originalMessage })
+      // 把用户原话作为聊天展示文本透传下去，避免聊天里显示的是固定模板；
+      // 同时把"图片素材"透传给生成 prompt（仅在图片路径时有值）。
+      // userMessageAlreadyShown=true 表示触发方（如 MindmatePanel 的图片路径）
+      // 已自行 push 用户气泡，向下游 'mindmate:send_message' 附带 silent=true，
+      // 避免聊天里冒出两条用户消息。注意这里不能用 imageContext 是否非空作为
+      // 代理信号——若图里几乎没有文字，imageContext 可能为空但仍是图片路径。
+      const alreadyShown = payload?.userMessageAlreadyShown === true
+      await handleDiagramGeneration({
+        displayMessageOverride: originalMessage,
+        imageContextOverride: imageContext || undefined,
+        silentUserMessage: alreadyShown,
+      })
     }
   )
 })

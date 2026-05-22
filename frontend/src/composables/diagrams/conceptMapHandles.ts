@@ -15,13 +15,13 @@ interface HandleResult {
   targetHandle: string
 }
 
-const TOPIC_NODE_WIDTH = 120
-const TOPIC_NODE_HEIGHT = 50
+const TOPIC_NODE_WIDTH = 760
+const TOPIC_NODE_HEIGHT = 104
 
 function getNodeCenter(node: DiagramNode): { x: number; y: number } {
   const isTopic = node.type === 'topic' || node.type === 'center'
-  const w = isTopic ? TOPIC_NODE_WIDTH : DEFAULT_NODE_WIDTH
-  const h = isTopic ? TOPIC_NODE_HEIGHT : DEFAULT_NODE_HEIGHT
+  const w = node.style?.width ?? (isTopic ? TOPIC_NODE_WIDTH : DEFAULT_NODE_WIDTH)
+  const h = node.style?.height ?? (isTopic ? TOPIC_NODE_HEIGHT : DEFAULT_NODE_HEIGHT)
   const x = (node.position?.x ?? 0) + w / 2
   const y = (node.position?.y ?? 0) + h / 2
   return { x, y }
