@@ -143,7 +143,12 @@ export const usePanelsStore = defineStore('panels', () => {
     const wasOpen = nodePalette.value.open
     const { diagramKey, conceptMapNodeId, conceptMapNodeText, ...restOptions } = options
     const snapshot = diagramKey && nodePaletteSessionsByDiagram.value.get(diagramKey)
-    const hasRestoredSession = !conceptMapNodeId && !!(snapshot && snapshot.suggestions.length > 0)
+    const hasExplicitPaletteData =
+      restOptions.suggestions !== undefined ||
+      restOptions.conceptMapTabs !== undefined ||
+      restOptions.expertSkeleton !== undefined
+    const hasRestoredSession =
+      !conceptMapNodeId && !hasExplicitPaletteData && !!(snapshot && snapshot.suggestions.length > 0)
     if (hasRestoredSession) {
       let conceptMapTabs = snapshot.conceptMapTabs ?? undefined
       let mode = snapshot.mode
@@ -164,6 +169,7 @@ export const usePanelsStore = defineStore('panels', () => {
         stage: snapshot.stage ?? null,
         stage_data: snapshot.stage_data ?? null,
         conceptMapTabs,
+        expertSkeleton: snapshot.expertSkeleton ?? null,
         open: true,
       }
     } else {
@@ -199,7 +205,8 @@ export const usePanelsStore = defineStore('panels', () => {
   }
 
   function saveNodePaletteSession(diagramKey: string): void {
-    const { suggestions, selected, stage, stage_data, conceptMapTabs } = nodePalette.value
+    const { suggestions, selected, stage, stage_data, conceptMapTabs, expertSkeleton } =
+      nodePalette.value
     let mode = nodePalette.value.mode
     if (suggestions.length > 0 && diagramKey) {
       let tabsToSave = conceptMapTabs ? [...conceptMapTabs] : undefined
@@ -222,6 +229,7 @@ export const usePanelsStore = defineStore('panels', () => {
         stage: stage ?? null,
         stage_data: stage_data ?? null,
         conceptMapTabs: tabsToSave,
+        expertSkeleton: expertSkeleton ?? null,
       })
       nodePaletteSessionsByDiagram.value = map
     }
@@ -304,6 +312,7 @@ export const usePanelsStore = defineStore('panels', () => {
       stage: null,
       stage_data: null,
       conceptMapTabs: undefined,
+      expertSkeleton: null,
     }
     if (clearSessions) {
       nodePaletteSessionsByDiagram.value = new Map()

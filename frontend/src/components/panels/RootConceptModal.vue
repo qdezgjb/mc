@@ -27,6 +27,9 @@ const uiStore = useUIStore()
 const panelsStore = usePanelsStore()
 const diagramStore = useDiagramStore()
 
+const isExpertSkeleton = computed(() => !!panelsStore.nodePalettePanel.expertSkeleton)
+const expertSkeletonTabs = computed(() => panelsStore.nodePalettePanel.expertSkeleton?.branches ?? [])
+
 const {
   isLoading,
   isLoadingMore,
@@ -46,6 +49,9 @@ const {
 })
 
 const conceptMapTabs = computed(() => {
+  if (isExpertSkeleton.value) {
+    return expertSkeletonTabs.value.map((branch) => ({ id: branch.id, name: branch.name }))
+  }
   const tabs = panelsStore.nodePalettePanel.conceptMapTabs ?? []
   const nodes = diagramStore.data?.nodes ?? []
   const nodeIds = new Set(nodes.map((n) => n.id))
@@ -60,6 +66,7 @@ const conceptMapRootText = computed(() => {
 })
 
 const paletteTabStripGlowClass = computed(() => {
+  if (isExpertSkeleton.value) return ''
   if (!isLoading.value && !isLoadingMore.value) return ''
   if (paletteStreamPhase.value === 'streaming') return 'palette-tab-strip-wrap--streaming'
   if (paletteStreamPhase.value === 'requesting') return 'palette-tab-strip-wrap--requesting'
@@ -71,6 +78,10 @@ watch(
   ([tabs, mode]) => {
     if (!mode || !tabs.length) return
     const valid = tabs.some((t) => t.id === mode)
+    if (isExpertSkeleton.value) {
+      if (!valid) panelsStore.updateNodePalette({ mode: tabs[0]?.id ?? null, selected: [] })
+      return
+    }
     if (!valid) switchConceptMapTab('topic')
   }
 )
@@ -92,30 +103,60 @@ function tabTitleAttr(tab: { id: string; name: string }): string {
 }
 
 function handleClose() {
+  if (isExpertSkeleton.value) {
+    panelsStore.clearNodePaletteState({ clearSessions: false })
+    emit('close')
+    return
+  }
   dismiss()
   emit('close')
 }
 
 function handleCancel() {
+  if (isExpertSkeleton.value) {
+    panelsStore.clearNodePaletteState({ clearSessions: false })
+    emit('close')
+    return
+  }
   cancel()
   emit('close')
 }
 
 async function handleRefresh() {
+  if (isExpertSkeleton.value) return
   await refreshConceptMapRootModal()
 }
 
 async function handleAddDomain() {
+  if (isExpertSkeleton.value) return
   await addConceptMapDomainTab()
 }
 
-function handleDragStart(event: DragEvent, suggestion: NodeSuggestion) {
+async function handleTabClick(tabId: string) {
+  if (isExpertSkeleton.value) {
+    if (panelsStore.nodePalettePanel.mode !== tabId) {
+      panelsStore.updateNodePalette({ mode: tabId, selected: [] })
+    }
+    return
+  }
+  await switchConceptMapTab(tabId)
+}
+
+function handleDragStart(
+  event: DragEvent,
+  suggestion: NodeSuggestion,
+  options?: { includeRelationship?: boolean }
+) {
   if (!event.dataTransfer) return
   const payload: { text: string; relationship_label?: string } = { text: suggestion.text }
   const rel = (suggestion.relationship_label ?? '').trim()
-  if (rel) payload.relationship_label = rel
+  if (options?.includeRelationship !== false && rel) payload.relationship_label = rel
   event.dataTransfer.setData(PALETTE_CONCEPT_DRAG_MIME, JSON.stringify(payload))
   event.dataTransfer.effectAllowed = 'copy'
+}
+
+function handleCardDragStart(event: DragEvent, suggestion: NodeSuggestion) {
+  handleDragStart(event, suggestion)
 }
 
 function getNodeCardStyle(suggestion: { source_llm?: string }, isSelected: boolean) {
@@ -134,6 +175,13 @@ function getNodeCardStyle(suggestion: { source_llm?: string }, isSelected: boole
 
 onMounted(async () => {
   await nextTick()
+  if (isExpertSkeleton.value) {
+    const firstBranchId = expertSkeletonTabs.value[0]?.id
+    if (firstBranchId && !panelsStore.nodePalettePanel.mode) {
+      panelsStore.updateNodePalette({ mode: firstBranchId, selected: [] })
+    }
+    return
+  }
   await initializeConceptMapRootModal()
 })
 </script>
@@ -145,7 +193,11 @@ onMounted(async () => {
     >
       <div class="flex gap-3 min-w-0 flex-1 items-center">
         <h3 class="text-sm font-semibold text-gray-800 dark:text-white truncate shrink-0">
-          {{ t('rootConceptModal.title') }}
+          {{
+            isExpertSkeleton
+              ? t('canvas.toolbar.moreAppConceptMapModes')
+              : t('rootConceptModal.title')
+          }}
         </h3>
         <div
           v-if="conceptMapTabs.length > 0"
@@ -165,14 +217,15 @@ onMounted(async () => {
                   ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-white shadow-sm'
                   : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
               "
-              :disabled="isLoading"
+              :disabled="!isExpertSkeleton && isLoading"
               :title="tabTitleAttr(tab)"
-              @click="switchConceptMapTab(tab.id)"
+              @click="handleTabClick(tab.id)"
             >
               {{ tabButtonLabel(tab) }}
             </button>
           </div>
           <ElTooltip
+            v-if="!isExpertSkeleton"
             :content="t('rootConceptModal.addBranchTooltip')"
             placement="bottom"
           >
@@ -191,6 +244,7 @@ onMounted(async () => {
       <div class="flex items-center gap-2 shrink-0">
         <div class="flex items-center gap-0">
           <ElTooltip
+            v-if="!isExpertSkeleton"
             :content="t('common.refresh')"
             placement="bottom"
           >
@@ -220,7 +274,7 @@ onMounted(async () => {
 
     <div class="panel-content flex-1 overflow-y-auto p-4 min-h-0">
       <div
-        v-if="isLoading && suggestions.length === 0"
+        v-if="!isExpertSkeleton && isLoading && suggestions.length === 0"
         class="flex flex-col items-center justify-center py-12 gap-4"
       >
         <Loader2 class="w-8 h-8 animate-spin text-blue-500" />
@@ -230,7 +284,7 @@ onMounted(async () => {
       </div>
 
       <div
-        v-else-if="errorMessage"
+        v-else-if="!isExpertSkeleton && errorMessage"
         class="py-4 text-sm text-red-600 dark:text-red-400"
       >
         {{ errorMessage }}
@@ -241,7 +295,7 @@ onMounted(async () => {
         class="flex flex-col gap-2"
       >
         <p
-          v-if="isLoading && suggestions.length > 0"
+          v-if="!isExpertSkeleton && isLoading && suggestions.length > 0"
           class="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1.5"
         >
           <Loader2 class="w-3.5 h-3.5 animate-spin shrink-0" />
@@ -251,10 +305,10 @@ onMounted(async () => {
           <div
             v-for="suggestion in suggestions"
             :key="suggestion.id"
-            class="node-card p-3 rounded-lg border-2 transition-all cursor-grab active:cursor-grabbing border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700"
+            class="node-card p-3 rounded-lg border-2 transition-all border-gray-200 dark:border-gray-600 cursor-grab active:cursor-grabbing hover:border-blue-300 dark:hover:border-blue-700"
             :style="getNodeCardStyle(suggestion, false)"
             draggable="true"
-            @dragstart="handleDragStart($event, suggestion)"
+            @dragstart="handleCardDragStart($event, suggestion)"
           >
             <span
               dir="auto"
@@ -265,10 +319,16 @@ onMounted(async () => {
             </span>
           </div>
         </div>
+        <div
+          v-if="isExpertSkeleton && suggestions.length === 0"
+          class="py-10 text-center text-sm text-gray-500 dark:text-gray-400"
+        >
+          {{ t('nodePalette.expertSkeletonEmpty') }}
+        </div>
       </div>
 
       <div
-        v-if="sessionId && !isLoading && suggestions.length > 0 && !isLoadingMore"
+        v-if="!isExpertSkeleton && sessionId && !isLoading && suggestions.length > 0 && !isLoadingMore"
         class="mt-4 flex justify-center"
       >
         <el-button
@@ -279,14 +339,14 @@ onMounted(async () => {
         </el-button>
       </div>
       <div
-        v-if="isLoadingMore"
+        v-if="!isExpertSkeleton && isLoadingMore"
         class="mt-4 flex justify-center"
       >
         <Loader2 class="w-5 h-5 animate-spin text-blue-500" />
       </div>
 
       <div
-        v-if="!isLoading && suggestions.length > 0"
+        v-if="!isExpertSkeleton && !isLoading && suggestions.length > 0"
         class="mt-4 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg"
       >
         <p class="text-xs text-gray-500 dark:text-gray-400">

@@ -41,6 +41,10 @@ export interface ParsedNounItem {
   detailConnectorLabel?: string
   /** level-5 节点文本，用于把 level-4 再向下展开一层。 */
   detailDescription?: string
+  /** 第二个 level-4 → level-5 分支的连接词/动词短语。 */
+  secondaryDetailConnectorLabel?: string
+  /** 第二个 level-5 分支节点文本。 */
+  secondaryDetailDescription?: string
   /** level-2 → level-3 边上的连接词（来自紧邻【】之前的 `「...」`）；缺失时边无标签。 */
   incomingConnector?: string
 }
@@ -462,12 +466,12 @@ export function extractMarkedNouns(text: string, maxCount: number = 4): ParsedNo
   //
   // - 前缀 `「...」`（方括号引号）：可选，作为 level-2→level-3 的 incomingConnector
   // - 主体 `【...】` 或半角 `[...]`：必须，为名词本身
-  // - 后缀 `『...』`（直角引号）最多四对：第一/三对=动词，第二/四对=宾语
+  // - 后缀 `『...』`（直角引号）最多六对：第一/三/五对=动词，第二/四/六对=宾语
   //
   // 注意：前缀和后缀使用**不同**的引号家族（「」 vs 『』），避免把上一个名词
   // 的尾部宾语误判为下一个名词的前置连接词。
   const re =
-    /(?:「\s*([^「」\n]{1,10}?)\s*」)?\s{0,4}(?:【\s*([^【】\n]+?)\s*】|\[\s*([^[\]\n]+?)\s*\])(?:\s{0,4}『\s*([^『』\n]{1,20}?)\s*』)?(?:\s{0,4}『\s*([^『』\n]{1,40}?)\s*』)?(?:\s{0,4}『\s*([^『』\n]{1,20}?)\s*』)?(?:\s{0,4}『\s*([^『』\n]{1,40}?)\s*』)?/gu
+    /(?:「\s*([^「」\n]{1,10}?)\s*」)?\s{0,4}(?:【\s*([^【】\n]+?)\s*】|\[\s*([^[\]\n]+?)\s*\])(?:\s{0,4}『\s*([^『』\n]{1,20}?)\s*』)?(?:\s{0,4}『\s*([^『』\n]{1,40}?)\s*』)?(?:\s{0,4}『\s*([^『』\n]{1,20}?)\s*』)?(?:\s{0,4}『\s*([^『』\n]{1,40}?)\s*』)?(?:\s{0,4}『\s*([^『』\n]{1,20}?)\s*』)?(?:\s{0,4}『\s*([^『』\n]{1,40}?)\s*』)?/gu
   let m: RegExpExecArray | null
   while ((m = re.exec(text)) !== null) {
     const rawNoun = (m[2] ?? m[3] ?? '').trim()
@@ -488,6 +492,8 @@ export function extractMarkedNouns(text: string, maxCount: number = 4): ParsedNo
     const rawSecond = (m[5] ?? '').trim()
     const rawThird = (m[6] ?? '').trim()
     const rawFourth = (m[7] ?? '').trim()
+    const rawFifth = (m[8] ?? '').trim()
+    const rawSixth = (m[9] ?? '').trim()
 
     const incomingConnector = cleanConnector(rawIncoming)
 
@@ -501,12 +507,18 @@ export function extractMarkedNouns(text: string, maxCount: number = 4): ParsedNo
     let description = ''
     let detailConnectorLabel = ''
     let detailDescription = ''
+    let secondaryDetailConnectorLabel = ''
+    let secondaryDetailDescription = ''
     if (rawFirst && rawSecond) {
       connectorLabel = cleanConnector(rawFirst)
       description = cleanDescription(rawSecond, clean)
       if (description && rawThird && rawFourth) {
         detailConnectorLabel = cleanConnector(rawThird)
         detailDescription = cleanDescription(rawFourth, description)
+        if (detailDescription && rawFifth && rawSixth) {
+          secondaryDetailConnectorLabel = cleanConnector(rawFifth)
+          secondaryDetailDescription = cleanDescription(rawSixth, description)
+        }
       }
     } else if (rawFirst) {
       const tail = cleanDescription(rawFirst, clean)
@@ -530,6 +542,8 @@ export function extractMarkedNouns(text: string, maxCount: number = 4): ParsedNo
     if (connectorLabel) item.connectorLabel = connectorLabel
     if (detailDescription) item.detailDescription = detailDescription
     if (detailConnectorLabel) item.detailConnectorLabel = detailConnectorLabel
+    if (secondaryDetailDescription) item.secondaryDetailDescription = secondaryDetailDescription
+    if (secondaryDetailConnectorLabel) item.secondaryDetailConnectorLabel = secondaryDetailConnectorLabel
     if (incomingConnector) item.incomingConnector = incomingConnector
     result.push(item)
     if (result.length >= maxCount) break
@@ -587,6 +601,53 @@ function cleanConnector(raw: string): string {
     .trim()
   if (!s) return ''
   return s
+}
+
+const PLACEHOLDER_CONNECTOR_RE =
+  /^(输入关系|请输入关系|关系|待补充|placeholder|todo|tbd|none|null)$/iu
+
+const DISCOURSE_CONNECTOR_WORDS = new Set([
+  '同时',
+  '同时也',
+  '进一步',
+  '进一步地',
+  '并且',
+  '而且',
+  '另外',
+  '此外',
+  '再者',
+  '然后',
+  '接着',
+  '随后',
+  '首先',
+  '其次',
+  '再次',
+  '最后',
+  '一方面',
+  '另一方面',
+  '总之',
+  '综上',
+  '因此',
+  '所以',
+  '然而',
+  '但是',
+  '不过',
+])
+
+const DISCOURSE_CONNECTOR_PREFIX_RE =
+  /^(?:同时|进一步|并且|而且|另外|此外|再者|然后|接着|随后|首先|其次|再次|最后|一方面|另一方面|总之|综上|因此|所以|然而|但是|不过)(?:也|地)?/u
+
+function repairConnector(cleaned: string): string {
+  if (!cleaned) return ''
+  if (PLACEHOLDER_CONNECTOR_RE.test(cleaned)) return ''
+  const repaired = cleanConnector(cleaned.replace(DISCOURSE_CONNECTOR_PREFIX_RE, ''))
+  if (repaired !== cleaned) {
+    if (!repaired || PLACEHOLDER_CONNECTOR_RE.test(repaired)) return ''
+    if (DISCOURSE_CONNECTOR_WORDS.has(repaired)) return ''
+    return repaired
+  }
+  if (DISCOURSE_CONNECTOR_WORDS.has(cleaned)) return ''
+  return cleaned
 }
 
 /**
@@ -897,12 +958,8 @@ function compactNodeText(text: string, maxChars: number): string {
 }
 
 function ensureConnector(label: string | undefined, fallback: string): string {
-  const cleaned = cleanConnector(label || '')
-  if (!cleaned) return fallback
-  if (/^(输入关系|请输入关系|关系|待补充|placeholder|todo|tbd|none|null)$/iu.test(cleaned)) {
-    return fallback
-  }
-  return cleaned
+  const repaired = repairConnector(cleanConnector(label || ''))
+  return repaired || fallback
 }
 
 function conciseFallbackBase(text: string): string {
@@ -928,9 +985,25 @@ function fallbackLevel5Text(nounText: string, description: string): string {
 
 function fallbackLevel5BranchText(nounText: string, description: string): string {
   const base = conciseFallbackBase(description) || conciseFallbackBase(nounText)
-  return compactNodeText(`${base}延伸`, MAX_NODE_TEXT_BY_LEVEL[5]) ||
+  return compactNodeText(`${base}表现`, MAX_NODE_TEXT_BY_LEVEL[5]) ||
     compactNodeText(`${nounText}影响`, MAX_NODE_TEXT_BY_LEVEL[5]) ||
-    '延伸影响'
+    '具体影响'
+}
+
+function resolvedLevel5Connector(nounItem: ParsedNounItem): string {
+  return ensureConnector(
+    nounItem.detailConnectorLabel || nounItem.connectorLabel,
+    '表现为'
+  )
+}
+
+function resolvedSecondaryLevel5Connector(nounItem: ParsedNounItem): string {
+  return ensureConnector(
+    nounItem.secondaryDetailConnectorLabel ||
+      nounItem.detailConnectorLabel ||
+      nounItem.connectorLabel,
+    '表现为'
+  )
 }
 
 export interface HierarchyInput {
@@ -1081,7 +1154,8 @@ export function computeHierarchyLayout(input: HierarchyInput): HierarchyLayoutRe
         edges.push(edge)
 
         const detailYOffset = (((detailIndex * 3 + aIdx + i) % 5) - 2) * 34
-        const shouldAddSecondDetail = detailIndex % 2 === 0
+        const shouldAddSecondDetail =
+          Boolean(nounItem.secondaryDetailDescription) || detailIndex % 2 === 0
         const rawDetail =
           nounItem.detailDescription || fallbackLevel5Text(nounText, descText)
         const detailText = compactNodeText(rawDetail, MAX_NODE_TEXT_BY_LEVEL[5]) || rawDetail
@@ -1104,12 +1178,13 @@ export function computeHierarchyLayout(input: HierarchyInput): HierarchyLayoutRe
         const detailEdge: { source: string; target: string; label?: string } = {
           source: descId,
           target: detailId,
-          label: ensureConnector(nounItem.detailConnectorLabel, '进一步'),
+          label: resolvedLevel5Connector(nounItem),
         }
         edges.push(detailEdge)
 
         if (shouldAddSecondDetail) {
-          const rawSecondDetail = fallbackLevel5BranchText(nounText, descText)
+          const rawSecondDetail =
+            nounItem.secondaryDetailDescription || fallbackLevel5BranchText(nounText, descText)
           const secondDetailText =
             compactNodeText(rawSecondDetail, MAX_NODE_TEXT_BY_LEVEL[5]) || rawSecondDetail
           const secondDetailId = `detail-${aIdx}-${i}-b`
@@ -1127,7 +1202,7 @@ export function computeHierarchyLayout(input: HierarchyInput): HierarchyLayoutRe
           const secondDetailEdge: { source: string; target: string; label?: string } = {
             source: descId,
             target: secondDetailId,
-            label: '同时',
+            label: resolvedSecondaryLevel5Connector(nounItem),
           }
           edges.push(secondDetailEdge)
         }

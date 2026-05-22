@@ -9,6 +9,7 @@ import { useAutoComplete } from '@/composables/editor/useAutoComplete'
 import { useDiagramStore } from '@/stores'
 import { useSavedDiagramsStore } from '@/stores/savedDiagrams'
 import { useUIStore } from '@/stores/ui'
+import { buildConceptMapExpertSkeleton } from '@/utils/conceptMapExpertSkeleton'
 
 export type MoreAppHandlerKey = 'concept_map_modes'
 
@@ -67,7 +68,6 @@ export function useCanvasToolbarApps() {
       name: t('canvas.toolbar.moreAppConceptMapModes'),
       icon: Layers,
       desc: t('canvas.toolbar.moreAppConceptMapModesDesc'),
-      tag: t('canvas.toolbar.tagSoon'),
       iconBg: 'bg-emerald-100',
       iconColor: 'text-emerald-600',
       handlerKey: 'concept_map_modes',
@@ -161,7 +161,44 @@ export function useCanvasToolbarApps() {
 
   function handleMoreAppItem(app: MoreAppItem) {
     if (app.handlerKey === 'concept_map_modes') {
-      notify.info(t('canvas.toolbar.conceptMapModesDev'))
+      if (!diagramStore.data?.nodes?.length) {
+        notify.warning(t('canvas.toolbar.createDiagramFirst'))
+        return
+      }
+      const skeleton = buildConceptMapExpertSkeleton(diagramStore.data)
+      if (!skeleton) {
+        notify.warning(t('canvas.toolbar.expertSkeletonUnavailable'))
+        return
+      }
+
+      diagramStore.pushHistory(t('canvas.toolbar.moreAppConceptMapModes'))
+      const nodes = diagramStore.data.nodes
+      const connections = diagramStore.data.connections ?? []
+      diagramStore.data.nodes = nodes.filter((node) => skeleton.visibleNodeIds.has(node.id))
+      diagramStore.data.connections = connections.filter((conn) =>
+        skeleton.visibleConnectionIds.has(conn.id)
+      )
+      diagramStore.clearSelection?.()
+      diagramStore.clearEdgeSelection?.()
+      eventBus.emit('panel:open_requested', {
+        panel: 'nodePalette',
+        source: 'toolbar',
+        options: {
+          suggestions: skeleton.suggestions,
+          selected: [],
+          mode: skeleton.branches[0]?.id ?? null,
+          stage: null,
+          stage_data: null,
+          conceptMapTabs: skeleton.branches.map((branch) => ({
+            id: branch.id,
+            name: branch.name,
+          })),
+          expertSkeleton: {
+            branches: skeleton.branches,
+          },
+        },
+      })
+      eventBus.emit('view:fit_to_canvas_requested', { animate: true, maxZoom: 1 })
       return
     }
     void handleMoreApp(app)

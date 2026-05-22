@@ -99,6 +99,7 @@ export default {
   'nodePalette.error.createDiagramFirst': '请先创建图示',
   'nodePalette.error.enterTopicText': '请为主题节点输入文字',
   'nodePalette.error.replacePlaceholder': '请输入真实主题，替换默认占位文字',
+  'nodePalette.expertSkeletonEmpty': '该分支下暂无可展示的下级概念',
   'nodePalette.fallbackTopicA': '主题A',
   'nodePalette.fallbackTopicB': '主题B',
   'nodePalette.finish': '完成',

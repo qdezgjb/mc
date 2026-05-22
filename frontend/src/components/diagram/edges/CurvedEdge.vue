@@ -508,10 +508,13 @@ const targetMarkerEnd = computed(() =>
 
 .edge-label.edge-label-concept-map {
   background: #f5f5f5;
-  padding: 4px 8px;
-  min-width: 28px;
-  min-height: 22px;
-  border-radius: 2px;
+  padding: 5px 10px;
+  min-width: 38px;
+  min-height: 30px;
+  border-radius: 4px;
+  font-size: 18px;
+  line-height: 1.2;
+  font-weight: 600;
 }
 
 .dark .edge-label-concept-map {
@@ -519,13 +522,14 @@ const targetMarkerEnd = computed(() =>
 }
 
 .edge-label-input {
-  width: 60px;
-  min-width: 40px;
-  max-width: 100px;
-  padding: 2px 4px;
-  font-size: 11px;
+  width: 96px;
+  min-width: 72px;
+  max-width: 180px;
+  padding: 3px 6px;
+  font-size: 18px;
+  line-height: 1.2;
   border: 1px solid #94a3b8;
-  border-radius: 2px;
+  border-radius: 4px;
   background: white;
   color: #333;
   outline: none;

@@ -51,6 +51,16 @@ export interface ConceptMapTab {
   name: string
 }
 
+export interface ExpertSkeletonBranch {
+  id: string
+  name: string
+  nodeIds: string[]
+}
+
+export interface ExpertSkeletonPanelData {
+  branches: ExpertSkeletonBranch[]
+}
+
 export interface NodePalettePanelState {
   open: boolean
   suggestions: NodeSuggestion[]
@@ -63,6 +73,8 @@ export interface NodePalettePanelState {
   stage_data?: Record<string, unknown> | null
   /** For concept_map: tabs for main topic + per-node sub-concept generation */
   conceptMapTabs?: ConceptMapTab[]
+  /** Concept map expert skeleton mode: static branch content extracted from current graph */
+  expertSkeleton?: ExpertSkeletonPanelData | null
 }
 
 /** Saved session state when user dismisses (X) node palette - restored on reopen */
@@ -73,6 +85,7 @@ export interface NodePaletteSessionSnapshot {
   stage?: string | null
   stage_data?: Record<string, unknown> | null
   conceptMapTabs?: ConceptMapTab[]
+  expertSkeleton?: ExpertSkeletonPanelData | null
 }
 
 export interface PropertyPanelState {

@@ -34,15 +34,16 @@ const SEPARATOR_OFFSET_Y = 15
 const SEPARATOR_DASHARRAY = '4,4'
 const LINE_WIDTH = 2
 const LABEL_OFFSET_Y = 15
-const LABEL_FONT_SIZE = 13
-const LABEL_CHIP_GAP = 8
-const CHIP_FONT_SIZE = 12
+const ANSWER_TEXT_FONT_SIZE = 22
+const LABEL_FONT_SIZE = ANSWER_TEXT_FONT_SIZE
+const LABEL_CHIP_GAP = 12
+const CHIP_FONT_SIZE = ANSWER_TEXT_FONT_SIZE
 const CHIP_COLOR = '#1976d2'
 const CHIP_OPACITY = 0.8
-const CHIP_SPACING = 8
-const CHIP_PADDING_X = 8
-const CHIP_PADDING_Y = 4
-const CHIP_RADIUS = 4
+const CHIP_SPACING = 12
+const CHIP_PADDING_X = 14
+const CHIP_PADDING_Y = 7
+const CHIP_RADIUS = 8
 
 const separatorLine = computed(() => {
   if (!isLearningSheet.value) return null

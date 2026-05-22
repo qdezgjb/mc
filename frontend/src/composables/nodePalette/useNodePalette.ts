@@ -863,6 +863,10 @@ export function useNodePalette(options: UseNodePaletteOptions = {}) {
 
   async function switchConceptMapTab(tabId: string): Promise<boolean> {
     if (diagramType.value !== 'concept_map') return false
+    if (panelsStore.nodePalettePanel.expertSkeleton) {
+      panelsStore.updateNodePalette({ mode: tabId, selected: [] })
+      return true
+    }
     if (panelsStore.nodePalettePanel.mode === tabId) return true
     if (abortController.value) {
       abortController.value.abort()

@@ -66,6 +66,13 @@ function getConceptMapFocusQuestionStyle() {
   } as const
 }
 
+function getConceptMapAspectIndexFromLayoutId(id: string): number | undefined {
+  const raw = id.match(/^(?:aspect|noun|desc|detail)-(\d+)/)?.[1]
+  if (!raw) return undefined
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
 /**
  * When true, flatter styles for use inside CanvasTopBar (single merged chrome row).
  * When embedded, `compactToolbar` is driven by CanvasTopBar (two-tier bar width breakpoints).
@@ -281,6 +288,14 @@ async function buildConceptHierarchyFromAnswer(
         text: layoutNode.text,
         type: 'branch',
         position: layoutNode.position,
+        parentId: layoutNode.parentId ?? undefined,
+        data: {
+          conceptMapAspectIndex:
+            layoutNode.level >= 2
+              ? getConceptMapAspectIndexFromLayoutId(layoutNode.id)
+              : undefined,
+          conceptMapLevel: layoutNode.level,
+        },
         style: getGeneratedConceptNodeStyle(level, layoutNode.text),
       })
       // 紧随其后，把通向该节点的父子边补上；
@@ -347,8 +362,14 @@ async function handleDiagramGeneration(opts?: {
 其中『第一层动词』『第一层宾语』会生成第 4 层，『第二层动词』『第二层宾语』会继续生成第 5 层。节点文字要短但必须完整：方面标题 4-6 字，关键名词 4-8 字，两个宾语各 4-8 字；不要写长句，也绝对不要输出被截断的词（例如不要把“人工智能”写成“人工智”）。所有「连接词A/B」和两组『动词』都必须是真实连接词，不能留空，不能写“输入关系”“关系”“待补充”。`
 prompt = `${prompt}
 
+【连接词命题性要求】
+所有连接词必须是谓语或关系短语，放在两个节点中间后要能读成一句完整中文命题：节点A + 连接词 + 节点B。禁止把篇章衔接词、顺序词、副词当连接词，例如“同时”“进一步”“并且”“而且”“另外”“此外”“首先”“其次”“然后”“最后”等；如果出现这类词，必须改成“体现为”“包含”“表现为”“导致”“形成”“支持”“强化”“削弱”“依赖于”等能构成命题的关系词。`
+prompt = `${prompt}
+
 【第 5 层分支要求】
-第 5 层不要只给单一路径：约一半的第 4 层节点应能继续形成两个不同的末层分支，两个分支的含义要不同且都要短而完整；不要重复同一个词，也不要省略连接词。`
+第 5 层不要只给单一路径：约一半的第 4 层节点应能继续形成两个不同的末层分支。需要两个末层分支时，请在同一个【关键名词】后连续给出六段直角引号：
+「连接词B」【关键名词】『第一层动词』『第一层宾语』『第二层动词』『第二层宾语』『第三层动词』『第三层宾语』
+其中第二层动词/宾语生成第一条末层分支，第三层动词/宾语生成第二条末层分支。第二层、第三层的动词都必须像上层一样是可合读成命题的真实关系词，不要使用“进一步”“同时”等篇章词，也不要省略连接词。`
 
   // 若本次有"图片素材"，作为参考资料追加到 prompt 末尾。
   // 注意只 append，不替换原模板——保留原有的"4 条层级链 + 严格输出格式"约束。
