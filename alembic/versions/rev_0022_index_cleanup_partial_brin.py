@@ -31,6 +31,7 @@ migration is safe to apply against existing or fresh databases.
 from typing import Sequence, Union
 
 from alembic import op
+from sqlalchemy import inspect
 
 revision: str = "0022"
 down_revision: Union[str, None] = "0021"
@@ -119,6 +120,15 @@ def _create_index(sql: str) -> None:
     op.execute(sql)
 
 
+def _table_has_columns(table: str, columns: tuple[str, ...]) -> bool:
+    """Return True when the target table and all referenced columns exist."""
+    inspector = inspect(op.get_bind())
+    if not inspector.has_table(table):
+        return False
+    existing_columns = {column["name"] for column in inspector.get_columns(table)}
+    return all(column in existing_columns for column in columns)
+
+
 def upgrade() -> None:
     """Apply the schema cleanup."""
     for name in _REDUNDANT_INDEXES:
@@ -130,16 +140,21 @@ def upgrade() -> None:
     _drop_index(_OLD_MINDBOT_THREAD_INDEX_NAME)
 
     for name, table, cols, where in _PARTIAL_INDEXES:
-        _create_index(f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" {cols} WHERE {where}')
+        referenced_columns = tuple(part.strip().split()[0] for part in cols.strip("()").split(","))
+        referenced_columns += tuple(where.replace("AND", " ").replace("NOT", " ").split())
+        if _table_has_columns(table, referenced_columns):
+            _create_index(f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" {cols} WHERE {where}')
 
     for name, table, column in _BRIN_INDEXES:
-        _create_index(f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" USING BRIN ("{column}")')
+        if _table_has_columns(table, (column,)):
+            _create_index(f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" USING BRIN ("{column}")')
 
-    _create_index(
-        f'CREATE INDEX IF NOT EXISTS "{_MINDBOT_THREAD_INDEX_NAME}" '
-        f'ON "mindbot_usage_events" '
-        f'("organization_id", "dingtalk_conversation_id", "id" DESC)'
-    )
+    if _table_has_columns("mindbot_usage_events", ("organization_id", "dingtalk_conversation_id", "id")):
+        _create_index(
+            f'CREATE INDEX IF NOT EXISTS "{_MINDBOT_THREAD_INDEX_NAME}" '
+            f'ON "mindbot_usage_events" '
+            f'("organization_id", "dingtalk_conversation_id", "id" DESC)'
+        )
 
 
 def downgrade() -> None:
@@ -153,15 +168,19 @@ def downgrade() -> None:
         _drop_index(name)
 
     for name, (table, column) in _BOOLEAN_INDEXES_TO_DROP.items():
-        _create_index(f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" ("{column}")')
+        if _table_has_columns(table, (column,)):
+            _create_index(f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" ("{column}")')
 
     for name, (table, column) in _REDUNDANT_CREATED_AT_BTREES.items():
-        _create_index(f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" ("{column}")')
+        if _table_has_columns(table, (column,)):
+            _create_index(f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" ("{column}")')
 
     for name, (table, column) in _REDUNDANT_INDEXES.items():
-        _create_index(f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" ("{column}")')
+        if _table_has_columns(table, (column,)):
+            _create_index(f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" ("{column}")')
 
-    _create_index(
-        f'CREATE INDEX IF NOT EXISTS "{_OLD_MINDBOT_THREAD_INDEX_NAME}" '
-        f'ON "mindbot_usage_events" ("dingtalk_conversation_id")'
-    )
+    if _table_has_columns("mindbot_usage_events", ("dingtalk_conversation_id",)):
+        _create_index(
+            f'CREATE INDEX IF NOT EXISTS "{_OLD_MINDBOT_THREAD_INDEX_NAME}" '
+            f'ON "mindbot_usage_events" ("dingtalk_conversation_id")'
+        )

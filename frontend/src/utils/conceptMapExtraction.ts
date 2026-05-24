@@ -904,6 +904,27 @@ const MAX_NODE_TEXT_BY_LEVEL = {
 
 const STAGGER_X = 36
 
+/**
+ * 同层节点的 Y 抖动量（"上下起伏"）。
+ *
+ * 用一个简单的伪随机相位把同层节点的 Y 坐标分散到 [-68, -34, 0, +34, +68]
+ * 这 5 个挡位上，产生视觉错落感、避免整层节点像被尺子拉成一条直线。
+ *
+ * 选 ±68 的上限是因为：
+ *   - HIERARCHY_NODE_HEIGHT (70) + HIERARCHY_NODE_MIN_GAP (70) = 140 是
+ *     `avoidSameLayerOverlaps` 用来判断"同层水平推开"的阈值；
+ *   - 任意两节点 Y 差最大 136 (< 140)，仍能触发同层水平避让；
+ *   - 同时离上下层 (HIERARCHY_LEVEL_GAP=270) 的距离仍有 >200 px，
+ *     不会让某一层的节点视觉上"跑进"上一层或下一层。
+ *
+ * 不同层使用不同的 seed 配方（见调用点），让父子节点不会同向偏移成
+ * "整列平移"，从而真的产生层与层之间的错落感。
+ */
+function staggerY(seed: number): number {
+  const slot = ((seed % 5) + 5) % 5
+  return (slot - 2) * 34
+}
+
 function estimateNodeWidth(text: string): number {
   const plain = compactNodeText(text, 0)
   const cjkCount = Array.from(plain).filter((ch) => /[\u4e00-\u9fff]/u.test(ch)).length
@@ -977,33 +998,12 @@ function fallbackLevel4Text(nounText: string, aspectHeading: string): string {
     '核心要点'
 }
 
-function fallbackLevel5Text(nounText: string, description: string): string {
-  return compactNodeText(`${nounText}表现`, MAX_NODE_TEXT_BY_LEVEL[5]) ||
-    compactNodeText(`${description}结果`, MAX_NODE_TEXT_BY_LEVEL[5]) ||
-    '具体表现'
-}
-
-function fallbackLevel5BranchText(nounText: string, description: string): string {
-  const base = conciseFallbackBase(description) || conciseFallbackBase(nounText)
-  return compactNodeText(`${base}表现`, MAX_NODE_TEXT_BY_LEVEL[5]) ||
-    compactNodeText(`${nounText}影响`, MAX_NODE_TEXT_BY_LEVEL[5]) ||
-    '具体影响'
-}
-
 function resolvedLevel5Connector(nounItem: ParsedNounItem): string {
-  return ensureConnector(
-    nounItem.detailConnectorLabel || nounItem.connectorLabel,
-    '表现为'
-  )
+  return ensureConnector(nounItem.detailConnectorLabel, '表现为')
 }
 
 function resolvedSecondaryLevel5Connector(nounItem: ParsedNounItem): string {
-  return ensureConnector(
-    nounItem.secondaryDetailConnectorLabel ||
-      nounItem.detailConnectorLabel ||
-      nounItem.connectorLabel,
-    '表现为'
-  )
+  return ensureConnector(nounItem.secondaryDetailConnectorLabel, '表现为')
 }
 
 export interface HierarchyInput {
@@ -1090,10 +1090,11 @@ export function computeHierarchyLayout(input: HierarchyInput): HierarchyLayoutRe
     const aspectCenterX = sectionCenterX + (aIdx % 2 === 0 ? -STAGGER_X : STAGGER_X)
 
     const aspectId = `aspect-${aIdx}`
+    const aspectYOffset = staggerY(aIdx * 2)
     nodes.push({
       id: aspectId,
       text: compactNodeText(aspect.heading, MAX_NODE_TEXT_BY_LEVEL[2]) || aspect.heading,
-      position: { x: aspectCenterX - nodeHalf, y: aspectY },
+      position: { x: aspectCenterX - nodeHalf, y: aspectY + aspectYOffset },
       parentId: 'root',
       level: 2,
     })
@@ -1118,10 +1119,11 @@ export function computeHierarchyLayout(input: HierarchyInput): HierarchyLayoutRe
         const nounItem = aspect.nouns[i]
         const nounId = `noun-${aIdx}-${i}`
         const nounText = compactNodeText(nounItem.text, MAX_NODE_TEXT_BY_LEVEL[3]) || nounItem.text
+        const nounYOffset = staggerY(aIdx * 3 + i * 2)
         nodes.push({
           id: nounId,
           text: nounText,
-          position: { x: nounCenterX - nodeHalf, y: nounY },
+          position: { x: nounCenterX - nodeHalf, y: nounY + nounYOffset },
           parentId: aspectId,
           level: 3,
         })
@@ -1139,10 +1141,11 @@ export function computeHierarchyLayout(input: HierarchyInput): HierarchyLayoutRe
         const rawDesc = nounItem.description || fallbackLevel4Text(nounText, aspect.heading)
         const descText = compactNodeText(rawDesc, MAX_NODE_TEXT_BY_LEVEL[4]) || rawDesc
         const descId = `desc-${aIdx}-${i}`
+        const descYOffset = staggerY(aIdx * 5 + i * 3 + 1)
         nodes.push({
           id: descId,
           text: descText,
-          position: { x: descCenterX - nodeHalf, y: descY },
+          position: { x: descCenterX - nodeHalf, y: descY + descYOffset },
           parentId: nounId,
           level: 4,
         })
@@ -1153,60 +1156,59 @@ export function computeHierarchyLayout(input: HierarchyInput): HierarchyLayoutRe
         }
         edges.push(edge)
 
-        const detailYOffset = (((detailIndex * 3 + aIdx + i) % 5) - 2) * 34
-        const shouldAddSecondDetail =
-          Boolean(nounItem.secondaryDetailDescription) || detailIndex % 2 === 0
-        const rawDetail =
-          nounItem.detailDescription || fallbackLevel5Text(nounText, descText)
-        const detailText = compactNodeText(rawDetail, MAX_NODE_TEXT_BY_LEVEL[5]) || rawDetail
-        const descVisualCenterX = descCenterX
-        const singleDetailSide = detailIndex % 2 === 0 ? -1 : 1
-        const firstDetailCenterX = shouldAddSecondDetail
-          ? descVisualCenterX - HIERARCHY_DETAIL_BRANCH_X_GAP
-          : descVisualCenterX + singleDetailSide * HIERARCHY_DETAIL_SINGLE_X_GAP
-        const detailId = `detail-${aIdx}-${i}`
-        nodes.push({
-          id: detailId,
-          text: detailText,
-          position: {
-            x: positionXForCenter(firstDetailCenterX, detailText),
-            y: detailY + detailYOffset,
-          },
-          parentId: descId,
-          level: 5,
-        })
-        const detailEdge: { source: string; target: string; label?: string } = {
-          source: descId,
-          target: detailId,
-          label: resolvedLevel5Connector(nounItem),
-        }
-        edges.push(detailEdge)
-
-        if (shouldAddSecondDetail) {
-          const rawSecondDetail =
-            nounItem.secondaryDetailDescription || fallbackLevel5BranchText(nounText, descText)
-          const secondDetailText =
-            compactNodeText(rawSecondDetail, MAX_NODE_TEXT_BY_LEVEL[5]) || rawSecondDetail
-          const secondDetailId = `detail-${aIdx}-${i}-b`
-          const secondDetailCenterX = descVisualCenterX + HIERARCHY_DETAIL_BRANCH_X_GAP
+        if (nounItem.detailDescription) {
+          const detailYOffset = staggerY(detailIndex * 3 + aIdx + i)
+          const shouldAddSecondDetail = Boolean(nounItem.secondaryDetailDescription)
+          const rawDetail = nounItem.detailDescription
+          const detailText = compactNodeText(rawDetail, MAX_NODE_TEXT_BY_LEVEL[5]) || rawDetail
+          const descVisualCenterX = descCenterX
+          const singleDetailSide = detailIndex % 2 === 0 ? -1 : 1
+          const firstDetailCenterX = shouldAddSecondDetail
+            ? descVisualCenterX - HIERARCHY_DETAIL_BRANCH_X_GAP
+            : descVisualCenterX + singleDetailSide * HIERARCHY_DETAIL_SINGLE_X_GAP
+          const detailId = `detail-${aIdx}-${i}`
           nodes.push({
-            id: secondDetailId,
-            text: secondDetailText,
+            id: detailId,
+            text: detailText,
             position: {
-              x: positionXForCenter(secondDetailCenterX, secondDetailText),
-              y: detailY + detailYOffset + 116,
+              x: positionXForCenter(firstDetailCenterX, detailText),
+              y: detailY + detailYOffset,
             },
             parentId: descId,
             level: 5,
           })
-          const secondDetailEdge: { source: string; target: string; label?: string } = {
+          const detailEdge: { source: string; target: string; label?: string } = {
             source: descId,
-            target: secondDetailId,
-            label: resolvedSecondaryLevel5Connector(nounItem),
+            target: detailId,
+            label: resolvedLevel5Connector(nounItem),
           }
-          edges.push(secondDetailEdge)
+          edges.push(detailEdge)
+
+          if (shouldAddSecondDetail) {
+            const rawSecondDetail = nounItem.secondaryDetailDescription || ''
+            const secondDetailText =
+              compactNodeText(rawSecondDetail, MAX_NODE_TEXT_BY_LEVEL[5]) || rawSecondDetail
+            const secondDetailId = `detail-${aIdx}-${i}-b`
+            const secondDetailCenterX = descVisualCenterX + HIERARCHY_DETAIL_BRANCH_X_GAP
+            nodes.push({
+              id: secondDetailId,
+              text: secondDetailText,
+              position: {
+                x: positionXForCenter(secondDetailCenterX, secondDetailText),
+                y: detailY + detailYOffset + 116,
+              },
+              parentId: descId,
+              level: 5,
+            })
+            const secondDetailEdge: { source: string; target: string; label?: string } = {
+              source: descId,
+              target: secondDetailId,
+              label: resolvedSecondaryLevel5Connector(nounItem),
+            }
+            edges.push(secondDetailEdge)
+          }
+          detailIndex += 1
         }
-        detailIndex += 1
       }
     }
 

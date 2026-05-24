@@ -5,14 +5,19 @@ Concept Map · Text Generation Stream API
 提供给画布"概念图教学设计"专用的流式生成接口：
 - POST /api/concept_map/generate-concept-map-text
 
-为什么不复用 MindMate 的 /api/ai_assistant/stream？
-    /api/ai_assistant/stream 走 Dify chatflow 工作流，里面通常含一个
-    JSON 抽取 / Code 节点期望前序 LLM 输出 ```json...```。而概念图生成 prompt
-    要求 LLM 输出**纯文本**（含【】「」『』 三类括号，且明确"不要返回 JSON"），
-    会导致 Dify 工作流报：
-        "Run failed: could not find json block in the output."
-    本接口绕开 Dify，直接调 MindGraph 自家 LLM 服务（llm_service.chat_stream），
-    按 SSE 协议流式返回纯文本 chunk。
+为什么直接调 DeepSeek 官方 API（不走 Dify 也不走 llm_service）？
+    1. /api/ai_assistant/stream 走 Dify chatflow 工作流，里面通常含一个
+       JSON 抽取 / Code 节点期望前序 LLM 输出 ```json...```。而概念图生成
+       prompt 要求 LLM 输出**纯文本**（含【】「」『』 三类括号，且明确
+       "不要返回 JSON"），会导致 Dify 报：
+           "Run failed: could not find json block in the output."
+    2. 项目内的 llm_service 把 model="deepseek" 通过负载均衡分流到
+       dashscope (deepseek-v3.1) 和 volcengine (用户自建接入点) 两条路；
+       dashscope 端是非推理模型，对本接口的多重硬约束 prompt 服从度差，
+       结果不稳定。
+    本接口因此**直接调 DeepSeek 官方 chat completions**（默认模型
+    `deepseek-reasoner` 即 R1，MoE 专家 + 深度思考），按 SSE 协议流式
+    返回纯文本 chunk。配置见 .env 中 DEEPSEEK_OFFICIAL_* 三项。
 
 字数兜底策略（auto-expand）：
     实测 Qwen 在 700-800 字下限指令下经常只输出 200-300 字就自然停止——
@@ -48,17 +53,19 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import os
 import re
 import time
-from typing import Optional
+from typing import AsyncGenerator, Optional, TypedDict
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from models import Messages, get_request_language
 from models.domain.auth import User
-from services.llm import llm_service
 from utils.auth import get_current_user_or_api_key
 
 logger = logging.getLogger(__name__)
@@ -85,8 +92,231 @@ _MAX_TARGET_CHARS = 820
 # 扩写阶段 max_tokens（要更宽松，因为是基于已有原文重写补充）。
 _EXPAND_MAX_TOKENS = 3000
 
-# Model used only by the concept-map teaching-design text stream.
-_CONCEPT_MAP_TEXT_MODEL = "deepseek"
+# 日志中文本预览的头/尾字符数。整段太长时只显示头尾；中间用占位符。
+# 实际生产环境一段概念图正文 ~700-800 字，加上 prompt 拼接 ~9K 字，全部
+# 打到日志会让单次请求日志膨胀，用 head+tail 截断可读性更好。
+_LOG_PREVIEW_HEAD = 800
+_LOG_PREVIEW_TAIL = 400
+
+
+def _preview(text: object, head: int = _LOG_PREVIEW_HEAD, tail: int = _LOG_PREVIEW_TAIL) -> str:
+    """
+    把任意文本/对象截断为"头部 + ... 中间省略 ... + 尾部"的预览字符串，方便
+    打到日志而不爆炸。返回值只用于日志展示，不参与业务计算。
+
+    短文本（≤ head + tail + 50）直接原样返回；长文本只显示头尾。
+    把换行替换为 ⏎ 字面量，避免单条日志被换行打散。
+    """
+    if text is None:
+        return "<None>"
+    s = str(text)
+    if not s:
+        return "<empty>"
+    n = len(s)
+
+    def _flatten(seg: str) -> str:
+        return seg.replace("\r\n", "⏎").replace("\n", "⏎").replace("\r", "⏎")
+
+    if n <= head + tail + 50:
+        return _flatten(s)
+    head_part = _flatten(s[:head])
+    tail_part = _flatten(s[-tail:])
+    return f"{head_part} … <省略 {n - head - tail} 字> … {tail_part}"
+
+# ----------------------------------------------------------------------------
+# DeepSeek 官方 API 直连配置
+#
+# 概念图教学设计文本生成专用通道：直接调 DeepSeek 官方 chat completions，
+# 绕开本项目内部的负载均衡 / 速率限制 / 知识库注入 / Dify 工作流，原因：
+#   1. 概念图 prompt 中含大量复杂硬约束（5 层结构、3-4 方面、L5 占比等），
+#      非推理模型很容易丢约束。R1 (deepseek-reasoner) 是 MoE 专家 + 深度思考
+#      推理模型，对长格式硬约束的服从度显著高于 V3.1 / qwen-plus。
+#   2. 项目内的 "deepseek" 别名走的是 dashscope/volcengine 50/50 负载均衡，
+#      其中 dashscope 端绑定的是 deepseek-v3.1（非推理模型），效果不稳定。
+#
+# 流式响应中 R1 会先输出 reasoning_content（思考过程，可能持续数十秒）再
+# 输出 content。本通道丢弃 reasoning_content，只把 content 转发给前端，
+# 因此用户在思考阶段会看到一段空白延迟（这是 R1 推理模型的固有特性）。
+# ----------------------------------------------------------------------------
+_DEEPSEEK_OFFICIAL_API_KEY_ENV = "DEEPSEEK_OFFICIAL_API_KEY"
+_DEEPSEEK_OFFICIAL_BASE_URL_ENV = "DEEPSEEK_OFFICIAL_BASE_URL"
+_DEEPSEEK_OFFICIAL_MODEL_ENV = "DEEPSEEK_OFFICIAL_MODEL"
+_DEEPSEEK_OFFICIAL_DEFAULT_BASE_URL = "https://api.deepseek.com"
+_DEEPSEEK_OFFICIAL_DEFAULT_MODEL = "deepseek-reasoner"
+# R1 思考阶段可能 30~120 秒，再加上 content 输出时间，整体超时给到 5 分钟。
+_DEEPSEEK_OFFICIAL_STREAM_TIMEOUT = 300.0
+
+
+async def _deepseek_official_chat_stream(
+    prompt: str,
+    *,
+    temperature: float,
+    max_tokens: int,
+    request_type: str,
+) -> AsyncGenerator[str, None]:
+    """
+    流式调用 DeepSeek 官方 chat completions。
+
+    只 yield 最终答案（`delta.content`），丢弃思考内容（`delta.reasoning_content`）。
+
+    NOTE on temperature: deepseek-reasoner (R1) 在官方实现里会**忽略** temperature
+    参数，但 deepseek-chat (V3) 仍然会使用它。我们在调用层保留 temperature，
+    模型层面是否生效由 DEEPSEEK_OFFICIAL_MODEL 环境变量切换决定。
+    """
+    api_key = (os.getenv(_DEEPSEEK_OFFICIAL_API_KEY_ENV) or "").strip()
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"{_DEEPSEEK_OFFICIAL_API_KEY_ENV} is not configured; "
+                "concept-map text generation requires DeepSeek official API."
+            ),
+        )
+
+    base_url = (
+        os.getenv(_DEEPSEEK_OFFICIAL_BASE_URL_ENV) or _DEEPSEEK_OFFICIAL_DEFAULT_BASE_URL
+    ).rstrip("/")
+    model = (
+        os.getenv(_DEEPSEEK_OFFICIAL_MODEL_ENV) or _DEEPSEEK_OFFICIAL_DEFAULT_MODEL
+    ).strip()
+
+    # base_url 兼容形如 "https://api.deepseek.com" 与 "https://api.deepseek.com/v1"
+    # 两种写法。chat completions 路径在两种 base 下都是 "<base>/chat/completions"。
+    url = f"{base_url}/chat/completions"
+
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": True,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+    }
+
+    # 调用入口日志：记录模型/URL/温度/max_tokens 和 prompt 头部预览，方便排查
+    # "送进去的 prompt 是不是预期的"，以及"参数有没有被改过"。
+    logger.info(
+        "[ConceptMapText:%s] >>> CALL DeepSeek model=%s url=%s temperature=%s "
+        "max_tokens=%s prompt_chars=%d prompt_preview=%s",
+        request_type,
+        model,
+        url,
+        temperature,
+        max_tokens,
+        len(prompt),
+        _preview(prompt),
+    )
+
+    reasoning_buf: list[str] = []
+    content_buf: list[str] = []
+    content_started = False
+    request_started = time.time()
+
+    try:
+        async with httpx.AsyncClient(timeout=_DEEPSEEK_OFFICIAL_STREAM_TIMEOUT) as client:
+            async with client.stream("POST", url, headers=headers, json=payload) as resp:
+                if resp.status_code >= 400:
+                    body = (await resp.aread()).decode("utf-8", errors="replace")
+                    logger.error(
+                        "[ConceptMapText:%s] DeepSeek official API HTTP %s: %s",
+                        request_type,
+                        resp.status_code,
+                        body[:500],
+                    )
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"DeepSeek API error ({resp.status_code})",
+                    )
+
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    # SSE 协议：每个事件以 "data: " 开头；DeepSeek 用 "data: [DONE]" 收尾
+                    if not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if not data_str:
+                        continue
+                    if data_str == "[DONE]":
+                        break
+
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        logger.debug(
+                            "[ConceptMapText:%s] non-JSON SSE line skipped: %r",
+                            request_type,
+                            data_str[:200],
+                        )
+                        continue
+
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+
+                    # R1: reasoning_content 是思考阶段的 token 流；只做日志聚合，
+                    # 不发到前端（避免污染概念图正文解析）。
+                    reasoning_piece = delta.get("reasoning_content")
+                    if reasoning_piece:
+                        reasoning_buf.append(reasoning_piece)
+                        continue
+
+                    content_piece = delta.get("content")
+                    if content_piece:
+                        if not content_started:
+                            content_started = True
+                            elapsed = time.time() - request_started
+                            logger.info(
+                                "[ConceptMapText:%s] reasoning phase finished: "
+                                "thinking_chars=%d elapsed=%.1fs, content stream begins",
+                                request_type,
+                                sum(len(p) for p in reasoning_buf),
+                                elapsed,
+                            )
+                        content_buf.append(content_piece)
+                        yield content_piece
+        # 流结束后完整记录 reasoning + content 两段的字符数和内容预览，
+        # 便于诊断 R1 是否在 reasoning 里完成了任务但 content 输出失败/被截断。
+        reasoning_full = "".join(reasoning_buf)
+        content_full = "".join(content_buf)
+        logger.info(
+            "[ConceptMapText:%s] <<< CALL DONE elapsed=%.1fs reasoning_chars=%d "
+            "content_chars=%d",
+            request_type,
+            time.time() - request_started,
+            len(reasoning_full),
+            len(content_full),
+        )
+        if reasoning_full:
+            logger.info(
+                "[ConceptMapText:%s] reasoning_preview=%s",
+                request_type,
+                _preview(reasoning_full),
+            )
+        logger.info(
+            "[ConceptMapText:%s] content_preview=%s",
+            request_type,
+            _preview(content_full),
+        )
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as e:
+        logger.error(
+            "[ConceptMapText:%s] DeepSeek official API timeout: %s", request_type, e
+        )
+        raise HTTPException(status_code=504, detail="DeepSeek API timeout")
+    except httpx.HTTPError as e:
+        logger.error(
+            "[ConceptMapText:%s] DeepSeek official API transport error: %s",
+            request_type,
+            e,
+        )
+        raise HTTPException(status_code=502, detail="DeepSeek API transport error")
 
 # 提示用户正在扩写的中转文本（按语言分），插入第一次输出与扩写结果之间。
 _EXPAND_NOTICE = {
@@ -151,6 +381,31 @@ _NUMBERED_LINE_FILL_RE = re.compile(r"^(\s*[1-9]\.\s*)(.+)$", re.MULTILINE)
 # 关键名词节点的全角方括号
 _KEY_NOUN_RE = re.compile(r"【[^【】\n]+】")
 
+# 一个关键名词后面最多允许 6 段 `『...』`：
+#   1/2 = level-3 -> level-4 的动词/宾语
+#   3/4 = 第一条 level-4 -> level-5 分支
+#   5/6 = 第二条 level-4 -> level-5 分支
+_KEY_NOUN_CHAIN_RE = re.compile(
+    r"【[^【】\n]+】((?:\s*『\s*[^『』\n]+?\s*』){0,6})"
+)
+_BRACKET_QUOTE_RE = re.compile(r"『\s*([^『』\n]+?)\s*』")
+_DEPTH_PLACEHOLDER_RE = re.compile(
+    r"^(?:\.{1,3}|…|——|-|输入关系|请输入关系|关系|待补充|请填写|placeholder|todo|tbd|none|null)$",
+    re.IGNORECASE,
+)
+
+
+class _DepthStats(TypedDict):
+    total_key_nouns: int
+    form_a_key_nouns: int
+    stub_form_a_key_nouns: int
+    level5_key_nouns: int
+    required_level5_key_nouns: int
+    double_branch_key_nouns: int
+    required_double_branch_min: int
+    required_double_branch_max: int
+    valid: bool
+
 
 def _fill_missing_connectors(text: str, language: str) -> str:
     """
@@ -204,6 +459,243 @@ def _fill_missing_connectors(text: str, language: str) -> str:
         last_end = match.end()
     out_parts.append(text[last_end:])
     return "".join(out_parts)
+
+
+def _clean_depth_piece(piece: str) -> str:
+    """Normalize one `『...』` segment before structural validation."""
+    return piece.strip(" \t\r\n，,。.；;：:、\"'“”‘’「」『』（）()")
+
+
+def _is_meaningful_depth_piece(piece: str) -> bool:
+    cleaned = _clean_depth_piece(piece)
+    return bool(cleaned) and _DEPTH_PLACEHOLDER_RE.fullmatch(cleaned) is None
+
+
+def _concept_map_depth_stats(text: str) -> _DepthStats:
+    """
+    Count whether generated concept chains produce the desired L5 layer shape.
+
+    Segment count semantics for a key noun (after `_is_meaningful_depth_piece`
+    truncation):
+        0 segments        -> Form B (no L4, no L5)
+        2 segments        -> "stub" Form A (L4 only, NO L5) — FORBIDDEN by spec
+        4 segments        -> Form A with ONE L5 branch (single)
+        ≥6 segments       -> Form A with TWO L5 branches (double)
+
+    Strict health check (all must pass for `valid=True`):
+        1. There is at least one Form-A key noun.
+        2. EVERY Form-A key noun MUST extend to L5 (level5 == form_a).
+           In other words, "stub" Form A with only 2 segments is treated as a
+           violation. This guarantees that no L4 node on the canvas is left
+           without any L5 children.
+        3. **EXACTLY half of Form-A key nouns must use the full 6 segments**
+           (double-branch). The valid range is
+           `double_branch ∈ [floor(level5/2), ceil(level5/2)]`. This is a
+           BOTH-sided check (not just ≥50%): "all 6 segments" or "all 4 segments"
+           are BOTH unacceptable. The intent is a roughly 50/50 mix of single
+           and double branch L5 nodes on the canvas.
+
+           Examples:
+               level5=4 → double_branch must be exactly 2
+               level5=5 → double_branch must be 2 or 3
+               level5=6 → double_branch must be exactly 3
+    """
+    total = 0
+    form_a = 0
+    stub_form_a = 0
+    level5 = 0
+    double_branch = 0
+    for match in _KEY_NOUN_CHAIN_RE.finditer(text or ""):
+        total += 1
+        pieces = [
+            _clean_depth_piece(piece)
+            for piece in _BRACKET_QUOTE_RE.findall(match.group(1) or "")
+        ]
+        meaningful_count = 0
+        for piece in pieces:
+            if not _is_meaningful_depth_piece(piece):
+                break
+            meaningful_count += 1
+        if meaningful_count >= 2:
+            form_a += 1
+        if 2 <= meaningful_count < 4:
+            stub_form_a += 1  # 仅 2 段——L4 没有 L5 子节点的"残缺形态A"
+        if meaningful_count >= 4:
+            level5 += 1
+        if meaningful_count >= 6:
+            double_branch += 1
+
+    # required_level5 = form_a：所有形态A 必须扩到 L5（stub form A 必须为 0）
+    required_level5 = form_a
+    # 双分支必须**恰好**占 L5 的一半（带 floor/ceil 容差吸收奇偶性）：
+    #   level5=4 → 必须正好 2 个双分支
+    #   level5=5 → 2 或 3 个双分支均可
+    #   level5=6 → 必须正好 3 个双分支
+    # 这条上下限双向校验，目的是阻止 LLM 偷懒选"全 4 段"或"全 6 段"两个极端。
+    required_double_min = level5 // 2
+    required_double_max = (level5 + 1) // 2
+    return {
+        "total_key_nouns": total,
+        "form_a_key_nouns": form_a,
+        "stub_form_a_key_nouns": stub_form_a,
+        "level5_key_nouns": level5,
+        "required_level5_key_nouns": required_level5,
+        "double_branch_key_nouns": double_branch,
+        "required_double_branch_min": required_double_min,
+        "required_double_branch_max": required_double_max,
+        "valid": (
+            form_a > 0
+            and stub_form_a == 0
+            and level5 >= required_level5
+            and required_double_min <= double_branch <= required_double_max
+        ),
+    }
+
+
+def _build_depth_repair_prompt(original_text: str, language: str, stats: _DepthStats) -> str:
+    """Ask the LLM to repair only the depth/bracketing structure."""
+    if language == "en":
+        return (
+            "Rewrite the concept-map analysis text below so its bracketed chains can "
+            "produce a valid five-level map.\n\n"
+            "---ORIGINAL START---\n"
+            f"{original_text}\n"
+            "---ORIGINAL END---\n\n"
+            "Hard requirements:\n"
+            "1. Keep exactly 3 or 4 numbered aspects (2 is forbidden; 5+ is forbidden) and the same overall topic.\n"
+            "2. Every Form-A key noun MUST follow this four- or six-segment pattern:\n"
+            "   `「connectorB」【key noun】『verb1』『object1』『verb2』『object2』` (4 segments, 1 L5 branch)\n"
+            "   OR `「connectorB」【key noun】『verb1』『object1』『verb2』『object2』『verb3』『object3』` (6 segments, 2 L5 branches)\n"
+            "3. **EVERY Form-A key noun (i.e. any noun followed by ANY 『』) MUST extend down to level 5** — "
+            "MUST have at least four 『』 segments. **A 'stub' Form A with only TWO segments is ABSOLUTELY "
+            "FORBIDDEN**: every L4 node on the canvas MUST have at least one L5 child. If you cannot fill "
+            "the second pair `『verb2』『object2』`, switch the noun to Form B (drop ALL 『』) instead.\n"
+            "4. **EXACTLY HALF of all Form-A key nouns MUST use 6 segments and HALF MUST use 4 segments** "
+            "(roughly 50/50 split, with at most 1 difference for odd totals). "
+            "**FORBIDDEN: making ALL Form-A nouns 6 segments OR ALL 4 segments** — both extremes are unacceptable. "
+            "Concretely: if there are 4 Form-A nouns, exactly 2 must be 6 segments and exactly 2 must be 4 segments. "
+            "If there are 5, then 2 or 3 must be 6 segments and the rest 4 segments. "
+            "If there are 6, exactly 3 must be 6 segments and exactly 3 must be 4 segments.\n"
+            "5. Every connector/verb must read as a predicate relation between adjacent nodes. "
+            "Do not use discourse words like also, furthermore, then, meanwhile. Do not use "
+            "placeholder text.\n"
+            "6. The object segments must be short noun phrases, not clauses.\n"
+            "7. Output only the rewritten numbered text. No explanation, no JSON.\n\n"
+            f"Current stats (target: stub_form_a_key_nouns == 0 AND "
+            f"level5_key_nouns == form_a_key_nouns AND "
+            f"required_double_branch_min <= double_branch_key_nouns <= required_double_branch_max): "
+            f"{json.dumps(stats, ensure_ascii=False)}"
+        )
+
+    if language == "zh-tw":
+        return (
+            "請重寫下面的概念圖分析正文，使其括號鏈條能生成合格的五層概念圖。\n\n"
+            "---原文開始---\n"
+            f"{original_text}\n"
+            "---原文結束---\n\n"
+            "硬性要求：\n"
+            "1. 保留 3 條或 4 條編號方面（**禁止 2 條**，也禁止 5 條及以上）與同一主題，不要增加說明段；\n"
+            "2. 每個形態A 關鍵名詞必須採用四段或六段格式之一：\n"
+            "   `「連接詞B」【關鍵名詞】『第一層動詞』『第一層賓語』『第二層動詞』『第二層賓語』`（四段，1 個第 5 層分支）；或\n"
+            "   `「連接詞B」【關鍵名詞】『第一層動詞』『第一層賓語』『第二層動詞』『第二層賓語』『第三層動詞』『第三層賓語』`（六段，2 個第 5 層分支）；\n"
+            "3. **所有形態A 關鍵名詞（即任何帶 『』 的名詞）必須向下展開到第 5 層**，"
+            "**嚴禁**只給兩段的「殘缺形態A」（兩段意味著第 4 層節點沒有第 5 層子節點，畫布稀疏）。"
+            "如果第二組『動詞』『賓語』填不出來，請把該名詞改用形態B（去掉**所有** 『』），不要保留兩段；\n"
+            "4. **所有形態A 關鍵名詞中恰好一半使用六段、恰好另一半使用四段**（大約 50/50 分布，奇數總數時相差至多 1 個）。"
+            "**嚴禁全部都用六段**，**也嚴禁全部都用四段**，兩種極端情況都不合格。"
+            "舉例：4 個形態A → 必須 2 個六段 + 2 個四段；"
+            "5 個形態A → 2~3 個六段 + 對應 3~2 個四段；"
+            "6 個形態A → 必須 3 個六段 + 3 個四段。"
+            "務必確保畫布上「一半 L4 有兩個 L5 分支、一半 L4 只有一個 L5 分支」的視覺平衡；\n"
+            "5. 每個連接詞/動詞都必須能放在相鄰兩個節點中間讀成命題，"
+            "禁止「同時」「進一步」「另外」「然後」等篇章詞，禁止占位詞；\n"
+            "6. 每個賓語段要是短名詞短語，不要寫成完整句子；\n"
+            "7. 只輸出重寫後的編號正文，不要解釋，不要 JSON。\n\n"
+            f"當前結構統計（目標：stub_form_a_key_nouns == 0 且 "
+            f"level5_key_nouns == form_a_key_nouns 且 "
+            f"required_double_branch_min ≤ double_branch_key_nouns ≤ required_double_branch_max）："
+            f"{json.dumps(stats, ensure_ascii=False)}"
+        )
+
+    return (
+        "请重写下面的概念图分析正文，使其括号链条能生成合格的五层概念图。\n\n"
+        "---原文开始---\n"
+        f"{original_text}\n"
+        "---原文结束---\n\n"
+        "硬性要求：\n"
+        "1. 保留 3 条或 4 条编号方面（**禁止 2 条**，也禁止 5 条及以上）与同一主题，不要增加说明段；\n"
+        "2. 每个形态A 关键名词必须采用四段或六段格式之一：\n"
+        "   `「连接词B」【关键名词】『第一层动词』『第一层宾语』『第二层动词』『第二层宾语』`（四段，1 个第 5 层分支）；或\n"
+        "   `「连接词B」【关键名词】『第一层动词』『第一层宾语』『第二层动词』『第二层宾语』『第三层动词』『第三层宾语』`（六段，2 个第 5 层分支）；\n"
+        "3. **所有形态A 关键名词（即任何带 『』 的名词）必须向下展开到第 5 层**，"
+        "**严禁**只给两段的“残缺形态A”（两段意味着第 4 层节点没有第 5 层子节点，画布稀疏）。"
+        "如果第二组『动词』『宾语』填不出来，请把该名词改用形态B（去掉**所有** 『』），不要保留两段；\n"
+        "4. **所有形态A 关键名词中恰好一半使用六段、恰好另一半使用四段**（大约 50/50 分布，奇数总数时相差至多 1 个）。"
+        "**严禁全部都用六段**，**也严禁全部都用四段**，两种极端情况都不合格。"
+        "举例：4 个形态A → 必须 2 个六段 + 2 个四段；"
+        "5 个形态A → 2~3 个六段 + 对应 3~2 个四段；"
+        "6 个形态A → 必须 3 个六段 + 3 个四段。"
+        "务必确保画布上“一半 L4 有两个 L5 分支、一半 L4 只有一个 L5 分支”的视觉平衡；\n"
+        "5. 每个连接词/动词都必须能放在相邻两个节点中间读成命题，"
+        "禁止“同时”“进一步”“另外”“然后”等篇章词，禁止占位词；\n"
+        "6. 每个宾语段要是短名词短语，不要写成完整句子；\n"
+        "7. 只输出重写后的编号正文，不要解释，不要 JSON。\n\n"
+        f"当前结构统计（目标：stub_form_a_key_nouns == 0 且 "
+        f"level5_key_nouns == form_a_key_nouns 且 "
+        f"required_double_branch_min ≤ double_branch_key_nouns ≤ required_double_branch_max）："
+        f"{json.dumps(stats, ensure_ascii=False)}"
+    )
+
+
+async def _repair_depth_structure(text: str, language: str) -> tuple[str, bool, _DepthStats]:
+    """Repair final text once if it cannot satisfy the level-5 branch contract."""
+    stats = _concept_map_depth_stats(text)
+    if stats["valid"]:
+        return text, False, stats
+
+    logger.info(
+        "[ConceptMapText] pass3 repair input_stats=%s",
+        json.dumps(stats, ensure_ascii=False),
+    )
+
+    repair_prompt = _build_depth_repair_prompt(text, language, stats)
+    repaired_raw = ""
+    async for chunk in _deepseek_official_chat_stream(
+        prompt=repair_prompt,
+        max_tokens=_EXPAND_MAX_TOKENS,
+        # Pass 3 修复：必须严守"必须六段『』、双分支占比、L5 占比"等结构性硬
+        # 约束，禁止任何遣词造句的随机性。temperature=0.0（贪婪解码）让 LLM
+        # 在每个 token 位置都选概率最高的候选，最大化对 prompt 的服从度。
+        # 注：deepseek-reasoner (R1) 会忽略此参数；deepseek-chat (V3) 生效。
+        temperature=0.0,
+        request_type="concept_map_text_depth_repair",
+    ):
+        if not chunk:
+            continue
+        repaired_raw += chunk if isinstance(chunk, str) else str(chunk)
+
+    repaired = _strip_meta_paragraphs(repaired_raw.strip())
+    repaired = _fill_missing_connectors(repaired, language)
+    repaired_stats = _concept_map_depth_stats(repaired)
+    logger.info(
+        "[ConceptMapText] pass3 repair raw_chars=%d cleaned_chars=%d post_stats=%s",
+        len(repaired_raw.strip()),
+        len(repaired),
+        json.dumps(repaired_stats, ensure_ascii=False),
+    )
+    logger.info(
+        "[ConceptMapText] pass3 repair raw_text=%s",
+        _preview(repaired_raw.strip()),
+    )
+    if repaired_stats["valid"]:
+        return repaired, True, repaired_stats
+
+    logger.warning(
+        "[ConceptMapText] pass3 repair FAILED to satisfy structure: before=%s after=%s",
+        json.dumps(stats, ensure_ascii=False),
+        json.dumps(repaired_stats, ensure_ascii=False),
+    )
+    return text, False, stats
 
 
 def _strip_meta_paragraphs(text: str) -> str:
@@ -358,9 +850,17 @@ async def generate_concept_map_text(
         )
 
     logger.info(
-        "[ConceptMapText] start: lang=%s prompt_chars=%d",
+        "============================================================"
+        "============================================================"
+    )
+    logger.info(
+        "[ConceptMapText] >>>>> NEW REQUEST lang=%s prompt_chars=%d",
         lang,
         len(prompt),
+    )
+    logger.info(
+        "[ConceptMapText] incoming_prompt_preview=%s",
+        _preview(prompt),
     )
 
     async def generate():
@@ -371,14 +871,18 @@ async def generate_concept_map_text(
             # =========================================================
             # Pass 1: 流式生成（用户实时看到正文逐字流出）
             # =========================================================
-            async for chunk in llm_service.chat_stream(
+            async for chunk in _deepseek_official_chat_stream(
                 prompt=prompt,
-                model=_CONCEPT_MAP_TEXT_MODEL,
                 max_tokens=_GEN_MAX_TOKENS,
-                temperature=0.7,
+                # Pass 1 首次生成：本接口 prompt 包含 7~8 条互相耦合的硬约束
+                # （3-4 方面 / Form-A 占比 / L5 占比 / 双分支占比 / 700-800
+                # 字 / 连接词非空 / 占位词禁用 等）。**约束越多，温度越低**。
+                # 设为 0.0 让 LLM 在每个 token 都走贪婪解码，最大化格式服从度。
+                # 副作用：同一焦点问题反复生成会得到几乎相同的结果（无多样性）—
+                # 这是用户明确要求的取舍。注：deepseek-reasoner (R1) 会忽略此
+                # 参数（R1 自带思考链确定性较强）；deepseek-chat (V3) 生效。
+                temperature=0.0,
                 request_type="concept_map_text_generation",
-                endpoint_path="/api/concept_map/generate-concept-map-text",
-                use_knowledge_base=False,
             ):
                 if not chunk:
                     continue
@@ -399,23 +903,53 @@ async def generate_concept_map_text(
             first_dirty = cleaned_first != stripped_first
             final_text = cleaned_first
             logger.info(
-                "[ConceptMapText] pass1 done: raw=%d cleaned=%d dirty=%s (target=%d~%d)",
+                "[ConceptMapText] ----- PASS 1 DONE -----"
+            )
+            logger.info(
+                "[ConceptMapText] pass1 raw_chars=%d cleaned_chars=%d dirty=%s (target_range=%d~%d)",
                 len(stripped_first),
                 len(cleaned_first),
                 first_dirty,
                 _MIN_TARGET_CHARS,
                 _MAX_TARGET_CHARS,
             )
+            logger.info(
+                "[ConceptMapText] pass1 raw_text=%s",
+                _preview(stripped_first),
+            )
+            if first_dirty:
+                logger.info(
+                    "[ConceptMapText] pass1 cleaned_text=%s",
+                    _preview(cleaned_first),
+                )
+            # 立刻算一次 pass1 的结构 stats，方便看 pass1 出来的就达标 vs 触发 pass3
+            pass1_stats = _concept_map_depth_stats(cleaned_first)
+            logger.info(
+                "[ConceptMapText] pass1 depth_stats=%s",
+                json.dumps(pass1_stats, ensure_ascii=False),
+            )
 
             # =========================================================
             # Pass 2 (可选): 字数不足时自动扩写。判断字数用清洗后的字符数，
             # 避免 LLM 用大段说明文字"凑字数"绕过下限。
+            #
+            # 注意"保护已合规的 pass1"：如果 pass1 的结构 stats 已经 valid=True，
+            # 且字数差距不大（≤ 60 字），就不冒险触发扩写——因为 LLM 在扩写
+            # 阶段往往会把原本合规的 50/50 双分支占比、形态A/B 比例打乱
+            # （倾向"全 6 段"策略），结果反而把好的输出搞坏。
             # =========================================================
-            if (
-                len(cleaned_first) < _MIN_TARGET_CHARS
-                and len(cleaned_first) > 50  # 太短的输出更可能是 LLM 报错，不扩写
-            ):
+            char_short = _MIN_TARGET_CHARS - len(cleaned_first)
+            pass1_too_short = 50 < len(cleaned_first) < _MIN_TARGET_CHARS
+            pass1_already_good = pass1_stats["valid"] and char_short <= 60
+            if pass1_too_short and not pass1_already_good:
                 expanded = True
+                logger.info(
+                    "[ConceptMapText] ----- PASS 2 TRIGGERED ----- "
+                    "(reason: cleaned_chars=%d < min=%d, pass1_valid=%s)",
+                    len(cleaned_first),
+                    _MIN_TARGET_CHARS,
+                    pass1_stats["valid"],
+                )
                 # 给用户一个可见提示
                 notice = _EXPAND_NOTICE.get(lang, _EXPAND_NOTICE["zh"])
                 yield _sse_event("message", answer=notice)
@@ -423,14 +957,15 @@ async def generate_concept_map_text(
                 # 扩写以"已清洗的 pass1"作为参考，免得 LLM 把说明段当成正文一起改写
                 expand_prompt = _build_expand_prompt(cleaned_first, lang)
                 expanded_text = ""
-                async for chunk in llm_service.chat_stream(
+                async for chunk in _deepseek_official_chat_stream(
                     prompt=expand_prompt,
-                    model=_CONCEPT_MAP_TEXT_MODEL,
                     max_tokens=_EXPAND_MAX_TOKENS,
-                    temperature=0.6,
+                    # Pass 2 字数扩写：在 pass1 已有原文基础上补字数，必须保留
+                    # 原有方面/编号/连接词/形态A 结构，禁止"创意改写"。
+                    # 同样设为 0.0 走贪婪解码。注：deepseek-reasoner (R1) 会
+                    # 忽略此参数；deepseek-chat (V3) 生效。
+                    temperature=0.0,
                     request_type="concept_map_text_expand",
-                    endpoint_path="/api/concept_map/generate-concept-map-text",
-                    use_knowledge_base=False,
                 ):
                     if not chunk:
                         continue
@@ -441,37 +976,131 @@ async def generate_concept_map_text(
 
                 cleaned_expanded = _strip_meta_paragraphs(expanded_text.strip())
                 cleaned_expanded = _fill_missing_connectors(cleaned_expanded, lang)
-                if len(cleaned_expanded) >= len(cleaned_first):
+                logger.info(
+                    "[ConceptMapText] pass2 raw_chars=%d cleaned_chars=%d (was %d)",
+                    len(expanded_text.strip()),
+                    len(cleaned_expanded),
+                    len(cleaned_first),
+                )
+                logger.info(
+                    "[ConceptMapText] pass2 raw_text=%s",
+                    _preview(expanded_text.strip()),
+                )
+                logger.info(
+                    "[ConceptMapText] pass2 cleaned_text=%s",
+                    _preview(cleaned_expanded),
+                )
+                # Pass 2 的接受闸门：必须同时满足三个硬性条件，否则回退 pass1。
+                # 经验表明 LLM 在扩写阶段很容易"过度施工"（把原本合规的 50/50
+                # 双分支比例改成全 6 段、把形态B 改成形态A、把字数从 670 字扩
+                # 到 956 字），结果是用更长但更不合规的文本"覆盖"原本健康的
+                # pass1 输出。这里用 stats 做结构守门：
+                #   1) 字数比 pass1 长（不能反而变短）
+                #   2) 字数不超过上限（不能膨胀超过 _MAX_TARGET_CHARS）
+                #   3) **不能比 pass1 更不合规**（不能把 valid=True 的 pass1
+                #       打成 valid=False 的 pass2）
+                pass2_stats = _concept_map_depth_stats(cleaned_expanded)
+                pass2_grew = len(cleaned_expanded) >= len(cleaned_first)
+                pass2_within_max = len(cleaned_expanded) <= _MAX_TARGET_CHARS
+                pass2_not_worse = pass2_stats["valid"] or not pass1_stats["valid"]
+                logger.info(
+                    "[ConceptMapText] pass2 acceptance check: grew=%s within_max=%s "
+                    "not_worse_than_pass1=%s pass1_valid=%s pass2_valid=%s "
+                    "pass2_stats=%s",
+                    pass2_grew,
+                    pass2_within_max,
+                    pass2_not_worse,
+                    pass1_stats["valid"],
+                    pass2_stats["valid"],
+                    json.dumps(pass2_stats, ensure_ascii=False),
+                )
+                if pass2_grew and pass2_within_max and pass2_not_worse:
                     final_text = cleaned_expanded
                     yield _sse_event("message_replace", answer=final_text)
                     logger.info(
-                        "[ConceptMapText] pass2 expanded: raw=%d cleaned=%d (was %d)",
-                        len(expanded_text.strip()),
-                        len(cleaned_expanded),
-                        len(cleaned_first),
+                        "[ConceptMapText] pass2 ACCEPTED: final replaced with expanded text"
                     )
                 else:
-                    # 扩写后反而更短，回退到 pass1 清洗版；如果 pass1 本身脏，仍发 replace
+                    # 扩写不合格，回退到 pass1 清洗版；如果 pass1 本身脏，仍发 replace
+                    reason = []
+                    if not pass2_grew:
+                        reason.append(f"shorter({len(cleaned_expanded)}<{len(cleaned_first)})")
+                    if not pass2_within_max:
+                        reason.append(f"over_max({len(cleaned_expanded)}>{_MAX_TARGET_CHARS})")
+                    if not pass2_not_worse:
+                        reason.append("broke_pass1_valid_structure")
                     logger.warning(
-                        "[ConceptMapText] pass2 shorter (cleaned=%d < %d), keep pass1 cleaned",
-                        len(cleaned_expanded),
-                        len(cleaned_first),
+                        "[ConceptMapText] pass2 REJECTED: %s, keeping pass1 cleaned",
+                        ", ".join(reason),
                     )
                     if first_dirty:
                         yield _sse_event("message_replace", answer=cleaned_first)
+                    else:
+                        # pass1 干净且 pass2 被拒：前端 streamingBuffer 仍是 pass1 流出的
+                        # 原始文本，这里不需要 message_replace。但要明确把 final_text
+                        # 重置回 pass1（防止下游 pass3 拿到坏的 pass2 文本）
+                        final_text = cleaned_first
             elif first_dirty:
                 # 字数够但 pass1 输出含说明段：只清洗，不扩写
                 yield _sse_event("message_replace", answer=cleaned_first)
+                logger.info(
+                    "[ConceptMapText] pass2 SKIPPED (within target range), but pass1 was dirty: "
+                    "sent message_replace with cleaned pass1"
+                )
+            else:
+                logger.info(
+                    "[ConceptMapText] pass2 SKIPPED (within target range and pass1 clean)"
+                )
+
+            # =========================================================
+            # Pass 3 (可选): 结构修复。前端不再用“表现/影响”伪造第 5 层，
+            # 因此最终文本必须自己提供 level-5 的动词/宾语链，并保证 50/50
+            # 的双分支占比。
+            # =========================================================
+            depth_stats = _concept_map_depth_stats(final_text)
+            logger.info(
+                "[ConceptMapText] ----- PASS 3 CHECKING ----- depth_stats=%s",
+                json.dumps(depth_stats, ensure_ascii=False),
+            )
+            if not depth_stats["valid"]:
+                logger.info(
+                    "[ConceptMapText] PASS 3 TRIGGERED (depth_stats.valid=False)"
+                )
+                final_text, repaired_depth, depth_stats = await _repair_depth_structure(
+                    final_text,
+                    lang,
+                )
+                logger.info(
+                    "[ConceptMapText] pass3 repaired=%s, post_stats=%s",
+                    repaired_depth,
+                    json.dumps(depth_stats, ensure_ascii=False),
+                )
+                logger.info(
+                    "[ConceptMapText] pass3 final_text=%s",
+                    _preview(final_text),
+                )
+                if repaired_depth:
+                    yield _sse_event("message_replace", answer=final_text)
+            else:
+                logger.info(
+                    "[ConceptMapText] PASS 3 SKIPPED (already valid)"
+                )
 
             # =========================================================
             # 收尾
             # =========================================================
             yield _sse_event("message_end", answer=final_text)
             logger.info(
-                "[ConceptMapText] stream completed: final_chars=%d expanded=%s first_dirty=%s",
+                "[ConceptMapText] <<<<< REQUEST COMPLETED final_chars=%d expanded=%s "
+                "first_dirty=%s final_depth_stats=%s",
                 len(final_text),
                 expanded,
                 first_dirty,
+                json.dumps(depth_stats, ensure_ascii=False),
+            )
+            logger.info(
+                "[ConceptMapText] final_text=%s",
+                _preview(final_text),
             )
         except Exception as e:
             logger.error(
