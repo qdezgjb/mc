@@ -10,6 +10,7 @@ import { ElButton, ElTooltip } from 'element-plus'
 import { Loader2, Plus, RefreshCw, X } from 'lucide-vue-next'
 
 import { useLanguage, useNotifications } from '@/composables'
+import { useCanvasToolbarApps } from '@/composables/canvasToolbar/useCanvasToolbarApps'
 import { PALETTE_CONCEPT_DRAG_MIME } from '@/composables/nodePalette/constants'
 import { getNodePalette } from '@/composables/nodePalette/useNodePalette'
 import { getLLMColor } from '@/config/llmModelColors'
@@ -26,6 +27,7 @@ const notify = useNotifications()
 const uiStore = useUIStore()
 const panelsStore = usePanelsStore()
 const diagramStore = useDiagramStore()
+const { exitExpertSkeletonMode } = useCanvasToolbarApps()
 
 const isExpertSkeleton = computed(() => !!panelsStore.nodePalettePanel.expertSkeleton)
 const expertSkeletonTabs = computed(() => panelsStore.nodePalettePanel.expertSkeleton?.branches ?? [])
@@ -104,7 +106,11 @@ function tabTitleAttr(tab: { id: string; name: string }): string {
 
 function handleClose() {
   if (isExpertSkeleton.value) {
-    panelsStore.clearNodePaletteState({ clearSessions: false })
+    // 优先尝试退出骨架模式（会同时恢复完整图、清面板状态、给提示）；
+    // 如果没有保存的快照（极少数边缘情况），退化为只清面板状态。
+    if (!exitExpertSkeletonMode()) {
+      panelsStore.clearNodePaletteState({ clearSessions: false })
+    }
     emit('close')
     return
   }
@@ -114,7 +120,9 @@ function handleClose() {
 
 function handleCancel() {
   if (isExpertSkeleton.value) {
-    panelsStore.clearNodePaletteState({ clearSessions: false })
+    if (!exitExpertSkeletonMode()) {
+      panelsStore.clearNodePaletteState({ clearSessions: false })
+    }
     emit('close')
     return
   }

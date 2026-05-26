@@ -320,6 +320,35 @@ function getPendingUploadFileIds(): string[] {
 }
 
 /**
+ * 判断给定 fileIds 对应的待发文件是否**全部为图片**。
+ * 用于决定 "正在读取……提炼焦点问题" 这条 assistant 占位消息的措辞——
+ * 用户上传的可能是图片，也可能是 PDF / Word 等文档（CONCEPT_MAP_UPLOAD_ACCEPT
+ * 在概念图模式下放开了文档类型）。统一显示"图片"两个字会让上传文档的用户
+ * 困惑：明明传的是 PDF，提示却说在"读取图片内容"。
+ *
+ * 不同通道的 type 字段语义不同：
+ *   - conceptMapFileStore.pendingFiles: type 是枚举 'image' | 'document' | ...
+ *   - mindMate.pendingFiles: type 是 MIME 字符串（如 'image/png'）
+ * 两边都兼容判断。空文件列表视为 true（落回 image 文案，与历史行为一致）。
+ */
+function pendingFilesAreAllImages(fileIds: string[]): boolean {
+  if (!fileIds.length) return true
+  const idSet = new Set(fileIds)
+  if (isConceptMapUploadMode.value) {
+    const matched = conceptMapFileStore.pendingFiles.filter((f) => idSet.has(f.id))
+    if (!matched.length) return true
+    return matched.every((f) => f.type === 'image')
+  }
+  const matched = mindMate.pendingFiles.value.filter((f) => idSet.has(f.id))
+  if (!matched.length) return true
+  return matched.every((f) => {
+    // mindMate 通道里的 type 是 MIME 字符串
+    const mime = typeof f.type === 'string' ? f.type : ''
+    return mime.startsWith('image/')
+  })
+}
+
+/**
  * 把概念图素材通道里挂载的 base64 data URL 取出来，按 file_id 顺序对齐。
  * 仅返回有 data_url 的那部分（缺失 base64 的图会回退到 Dify 反向下载兜底）。
  */
@@ -364,6 +393,22 @@ async function triggerConceptMapGenerationFromImages(
 ): Promise<boolean> {
   const fileDataUrls = getPendingFileDataUrlsByIds(uploadFileIds)
   const fileNames = getPendingFileNamesByIds(uploadFileIds)
+
+  // 关键顺序：必须**在 detachPendingFiles() 之前**判断文件类型。
+  // detachPendingFiles 会清空 conceptMapFileStore.pendingFiles，之后再调
+  // pendingFilesAreAllImages 会因为找不到任何匹配文件而落到"默认 true"
+  // 分支，导致即使用户上传的是 PDF/文档也被错误地识别为图片。
+  const allImages = pendingFilesAreAllImages(uploadFileIds)
+  const analyzingMessageKey = allImages
+    ? 'conceptMapImage.analyzingImageForFocusQuestion'
+    : 'conceptMapImage.analyzingFileForFocusQuestion'
+  const generateOriginalMessageKey = allImages
+    ? 'conceptMapImage.generateFromImageWithFocusQuestion'
+    : 'conceptMapImage.generateFromFileWithFocusQuestion'
+  const focusQuestionExtractFailedKey = allImages
+    ? 'conceptMapImage.imageFocusQuestionExtractFailed'
+    : 'conceptMapImage.fileFocusQuestionExtractFailed'
+
   const messageFiles = isConceptMapUploadMode.value
     ? conceptMapFileStore.detachPendingFiles()
     : [...mindMate.pendingFiles.value]
@@ -375,14 +420,14 @@ async function triggerConceptMapGenerationFromImages(
     files: messageFiles,
   })
 
-  // 推一条临时 assistant 消息提示"读图中"，便于用户感知耗时来源；
+  // 推一条临时 assistant 消息提示"读图/读文件中"，便于用户感知耗时来源；
   // 注意此处不主动 push 用户消息——失败时让 mindMate.sendMessage 完整走流程，
   // 成功时由 CanvasToolbar 触发的 'mindmate:send_message' 路径展示原话。
   const placeholderId = `assistant_pending_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
   mindMate.messages.value.push({
     id: placeholderId,
     role: 'assistant',
-    content: t('conceptMapImage.analyzingImageForFocusQuestion'),
+    content: t(analyzingMessageKey),
     timestamp: Date.now(),
     isStreaming: true,
   })
@@ -405,7 +450,7 @@ async function triggerConceptMapGenerationFromImages(
 
   if (!result.success || !result.question) {
     notify.error(
-      `${t('conceptMapImage.imageFocusQuestionExtractFailed')}${result.error ? `: ${result.error}` : ''}`
+      `${t(focusQuestionExtractFailedKey)}${result.error ? `: ${result.error}` : ''}`
     )
     return true
   }
@@ -424,7 +469,7 @@ async function triggerConceptMapGenerationFromImages(
   // 让 useMindMate 在收到 'mindmate:send_message' 时不再重复 push 第二条气泡。
   eventBus.emit('concept_map:focus_question_generation_requested', {
     question: result.question,
-    originalMessage: t('conceptMapImage.generateFromImageWithFocusQuestion', {
+    originalMessage: t(generateOriginalMessageKey, {
       question: result.question,
     }),
     imageContext: (result.imageContent || '').trim() || undefined,

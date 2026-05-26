@@ -392,9 +392,19 @@ onMounted(async () => {
   )
 
   // Node palette: listen for open events (singleton created at setup top)
+  //
+  // 注意：专家骨架图模式下（panelsStore.nodePalettePanel.expertSkeleton 非空），
+  // 面板的 suggestions 已经由调用方 (useCanvasToolbarApps) 直接塞入 panelsStore，
+  // 不需要再发起 LLM 请求生成。否则 startNodePaletteSession 会触发一次 SSE
+  // 流，用 LLM 生成的内容覆盖掉骨架图的 suggestions —— 表现为：标签栏分支
+  // 名是骨架图的（教育资源开放共享/育人功能面临挑战/...），但卡片列表内容
+  // 是另一组 LLM 实时生成的随机概念，跟标签完全对不上号。
   eventBus.onWithOwner(
     'nodePalette:opened',
     (data: { hasRestoredSession?: boolean; wasPanelAlreadyOpen?: boolean }) => {
+      if (panelsStore.nodePalettePanel.expertSkeleton) {
+        return
+      }
       if (!data.hasRestoredSession && diagramStore.data?.nodes?.length) {
         nextTick().then(() =>
           startNodePaletteSession({ keepSessionId: data.wasPanelAlreadyOpen ?? false })

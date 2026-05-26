@@ -7,9 +7,16 @@ import { useLanguage } from '@/composables/core/useLanguage'
 import { useNotifications } from '@/composables/core/useNotifications'
 import { useAutoComplete } from '@/composables/editor/useAutoComplete'
 import { useDiagramStore } from '@/stores'
+import { usePanelsStore } from '@/stores/panels'
 import { useSavedDiagramsStore } from '@/stores/savedDiagrams'
 import { useUIStore } from '@/stores/ui'
 import { buildConceptMapExpertSkeleton } from '@/utils/conceptMapExpertSkeleton'
+
+import {
+  consumeExpertSkeletonOriginalGraph,
+  hasExpertSkeletonOriginalGraph,
+  saveExpertSkeletonOriginalGraph,
+} from './expertSkeletonOriginalGraph'
 
 export type MoreAppHandlerKey = 'concept_map_modes'
 
@@ -27,6 +34,7 @@ export type MoreAppItem = {
 export function useCanvasToolbarApps() {
   const diagramStore = useDiagramStore()
   const savedDiagramsStore = useSavedDiagramsStore()
+  const panelsStore = usePanelsStore()
   const uiStore = useUIStore()
   const { t } = useLanguage()
   const notify = useNotifications()
@@ -159,8 +167,39 @@ export function useCanvasToolbarApps() {
     eventBus.emit('panel:open_requested', { panel: 'nodePalette', source: 'toolbar', options })
   }
 
+  /**
+   * 退出专家骨架图模式：把保存的原始完整概念图恢复到画布、关闭面板、提示用户。
+   * 调用前提：`hasExpertSkeletonOriginalGraph()` 为 true（即当前确实在骨架模式）。
+   * 注意：用户在骨架模式下对画布做的任何修改都不会被合并回原图，恢复后即丢失，
+   *       所以必须给一条视觉提示（toast）让用户知道这件事。
+   */
+  function exitExpertSkeletonMode(): boolean {
+    const original = consumeExpertSkeletonOriginalGraph()
+    if (!original) return false
+    if (!diagramStore.data) return false
+
+    diagramStore.pushHistory(t('canvas.toolbar.expertSkeletonRestored'))
+    diagramStore.data.nodes = original.nodes
+    diagramStore.data.connections = original.connections
+    diagramStore.clearSelection?.()
+    diagramStore.clearEdgeSelection?.()
+    // 关闭专家骨架图面板（保留普通节点面板的会话快照不动）
+    panelsStore.clearNodePaletteState({ clearSessions: false })
+    notify.success(t('canvas.toolbar.expertSkeletonRestored'))
+    eventBus.emit('view:fit_to_canvas_requested', { animate: true, maxZoom: 1 })
+    return true
+  }
+
   function handleMoreAppItem(app: MoreAppItem) {
     if (app.handlerKey === 'concept_map_modes') {
+      // 二次点击切换回完整图：以"已保存的快照"为唯一权威标志。
+      // 直接看 panelsStore.expertSkeleton 不够稳定（用户可能从 X 按钮关掉
+      // 了面板但画布还停留在骨架视图）；以快照为准能覆盖更多边界情况。
+      if (hasExpertSkeletonOriginalGraph()) {
+        exitExpertSkeletonMode()
+        return
+      }
+
       if (!diagramStore.data?.nodes?.length) {
         notify.warning(t('canvas.toolbar.createDiagramFirst'))
         return
@@ -171,9 +210,13 @@ export function useCanvasToolbarApps() {
         return
       }
 
-      diagramStore.pushHistory(t('canvas.toolbar.moreAppConceptMapModes'))
+      // 先保存原始完整图的快照，再做骨架过滤——顺序不能反，否则保存的就是
+      // 已经被裁掉的骨架视图，再次点击恢复时就拿不回完整图了。
       const nodes = diagramStore.data.nodes
       const connections = diagramStore.data.connections ?? []
+      saveExpertSkeletonOriginalGraph(nodes, connections)
+
+      diagramStore.pushHistory(t('canvas.toolbar.moreAppConceptMapModes'))
       diagramStore.data.nodes = nodes.filter((node) => skeleton.visibleNodeIds.has(node.id))
       diagramStore.data.connections = connections.filter((conn) =>
         skeleton.visibleConnectionIds.has(conn.id)
@@ -198,6 +241,7 @@ export function useCanvasToolbarApps() {
           },
         },
       })
+      notify.success(t('canvas.toolbar.expertSkeletonEntered'))
       eventBus.emit('view:fit_to_canvas_requested', { animate: true, maxZoom: 1 })
       return
     }
@@ -267,5 +311,6 @@ export function useCanvasToolbarApps() {
     handleAIGenerate,
     handleConceptGeneration,
     handleMoreAppItem,
+    exitExpertSkeletonMode,
   }
 }

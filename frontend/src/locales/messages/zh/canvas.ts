@@ -237,6 +237,8 @@ export default {
   'canvas.toolbar.moreAppConceptMapModes': '专家骨架图',
   'canvas.toolbar.moreAppConceptMapModesDesc': '提供高水平结构，助力学习者高效同化内化。',
   'canvas.toolbar.expertSkeletonUnavailable': '请先生成完整概念图后再使用专家骨架图',
+  'canvas.toolbar.expertSkeletonEntered': '已进入专家骨架图，再次点击「专家骨架图」可返回完整概念图',
+  'canvas.toolbar.expertSkeletonRestored': '已恢复完整概念图（骨架图模式下的修改未保留）',
   'canvas.toolbar.moreAppLearningSheet': '填空概念图',
   'canvas.toolbar.moreAppLearningSheetDesc': '随机留空，学习复习好搭子',
   'canvas.toolbar.moreAppWaterfall': '瀑布流',

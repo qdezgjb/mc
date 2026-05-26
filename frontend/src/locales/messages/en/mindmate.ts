@@ -33,10 +33,16 @@ export default {
   'autoComplete.selectDiagramType': 'Please select diagram type',
   'conceptMapImage.analyzingImageForFocusQuestion':
     'Reading the image and extracting a focus question...',
+  'conceptMapImage.analyzingFileForFocusQuestion':
+    'Reading the file content and extracting a focus question...',
   'conceptMapImage.generateFromImageWithFocusQuestion':
     'Generate a concept map from the image (focus question: {question})',
+  'conceptMapImage.generateFromFileWithFocusQuestion':
+    'Generate a concept map from the file content (focus question: {question})',
   'conceptMapImage.imageFocusQuestionExtractFailed':
     'Failed to extract a focus question from the image',
+  'conceptMapImage.fileFocusQuestionExtractFailed':
+    'Failed to extract a focus question from the file',
   'conceptMapPicker.currentFocusQuestion': 'Current focus question',
   'conceptMapPicker.currentRootConcept': 'Current root concept',
   'conceptMapPicker.focusAlternativesHint': 'Alternatives ({pageSize} per page, adaptive height)',

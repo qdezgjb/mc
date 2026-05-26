@@ -317,9 +317,13 @@ watch(
   { immediate: true }
 )
 
+// 专家骨架图模式下不发起 LLM 请求（详见 CanvasPage.vue 同处的注释）。
 eventBus.onWithOwner(
   'nodePalette:opened',
   (data: { hasRestoredSession?: boolean; wasPanelAlreadyOpen?: boolean }) => {
+    if (panelsStore.nodePalettePanel.expertSkeleton) {
+      return
+    }
     if (!data.hasRestoredSession && diagramStore.data?.nodes?.length) {
       startNodePaletteSession({ keepSessionId: data.wasPanelAlreadyOpen ?? false })
     }
