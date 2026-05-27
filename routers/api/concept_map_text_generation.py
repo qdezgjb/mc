@@ -18,22 +18,16 @@ Concept Map · Text Generation Stream API
     （默认模型 `qwen-plus-latest`），按 SSE 协议流式返回纯文本 chunk。
     配置见 .env 中 QWEN_API_KEY / QWEN_API_URL / QWEN_MODEL_GENERATION。
 
-字数兜底策略（auto-expand）：
-    实测 Qwen 在 700-800 字下限指令下经常只输出 200-300 字就自然停止——
-    这是 LLM 普遍弱点（擅长遵守上限不擅长遵守下限）。
-    所以本接口在第一遍流式生成后，如果有效正文字符数不足
-    _MIN_TARGET_CHARS（480 字），会**追加调一次** LLM 让它在原文基础上
-    扩写到 700-800 字之间。扩写阶段：
-      1. 先发一条 message 提示用户"正在自动扩充"；
-      2. 非流式拿到完整扩写文；
-      3. 通过 `message_replace` 事件把前端 streamingBuffer 整段替换为最终版本，
-         避免编号 1./2./3./4. 重复污染解析；
-      4. 再发 message_end 收尾。
+输出清洗策略：
+    本接口不再做字数不足后的二次扩写。第一遍生成后只做两类收口：
+      1. 剥离 LLM 误写出的字数统计、关键名词统计、自检/校验修正等说明性内容；
+      2. 必要时补齐缺失的连接词，或执行一次五层结构修复。
+    清洗或结构修复后的完整结果会通过 `message_replace` 覆盖前端缓冲区。
 
 输出协议（SSE）：
     data: {"event":"message","answer":"<chunk>"}\n\n
     ...
-    # 仅当触发自动扩写时出现：
+    # 仅当清洗或结构修复需要覆盖已显示内容时出现：
     data: {"event":"message_replace","answer":"<full final text>"}\n\n
     data: {"event":"message_end","answer":"<full text>"}\n\n
     或异常时：
@@ -52,7 +46,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import os
 import re
 import time
@@ -84,12 +77,12 @@ _PROMPT_MAX_CHARS = 16_000
 # 给 max_tokens 留足够缓冲覆盖中文/英文/繁体三语场景。
 _GEN_MAX_TOKENS = 2500
 
-# 字数下限阈值。低于该阈值触发自动扩写（带 20 字宽容度，避免在 700 字临界点反复扩写）。
+# 字数目标范围仅用于日志观察；低于下限不再触发自动扩写。
 _MIN_TARGET_CHARS = 680
 _MAX_TARGET_CHARS = 820
 
-# 扩写阶段 max_tokens（要更宽松，因为是基于已有原文重写补充）。
-_EXPAND_MAX_TOKENS = 3000
+# 结构修复阶段 max_tokens。这里只用于必要的五层链条修复，不再做字数扩写。
+_REPAIR_MAX_TOKENS = 3000
 
 # 日志中文本预览的头/尾字符数。整段太长时只显示头尾；中间用占位符。
 # 实际生产环境一段概念图正文 ~700-800 字，加上 prompt 拼接 ~9K 字，全部
@@ -129,7 +122,7 @@ def _preview(text: object, head: int = _LOG_PREVIEW_HEAD, tail: int = _LOG_PREVI
 # chat completions（即通义千问 Qwen 系列），绕开本项目内部的负载均衡 /
 # 速率限制 / 知识库注入 / Dify 工作流。原因：
 #   1. 概念图 prompt 中含大量复杂硬约束（5 层结构、3-4 方面、L5 占比等），
-#      Pass 2/3 还要在原文基础上做结构修复 / 字数扩写，链路必须能精细控制
+#      后端还要做结构修复和输出清洗，链路必须能精细控制
 #      temperature、max_tokens、超时和 SSE 长连接。
 #   2. 项目内 llm_service 的"qwen"别名会经过额外的负载均衡、QPM 限速和
 #      统一缓存，不适合本接口"长 prompt + 严格格式 + 多次重试"的场景。
@@ -338,14 +331,6 @@ async def _qwen_chat_stream(
         )
         raise HTTPException(status_code=502, detail="Qwen API transport error")
 
-# 提示用户正在扩写的中转文本（按语言分），插入第一次输出与扩写结果之间。
-_EXPAND_NOTICE = {
-    "zh": "\n\n（内容字数偏少，正在自动扩充至 700-800 字...）\n\n",
-    "zh-tw": "\n\n（內容字數偏少，正在自動擴充至 700-800 字...）\n\n",
-    "en": "\n\n(Content too short, auto-expanding to 700-800 words...)\n\n",
-}
-
-
 # ============================================================================
 # Schemas
 # ============================================================================
@@ -378,6 +363,22 @@ _PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n+")
 # 真正的概念图正文段必然包含至少一个这类括号；
 # LLM 自己写的"说明段"（即使带 1./2./3./4. 编号）几乎从不塞这些括号。
 _CONCEPT_BRACKET_RE = re.compile(r"[「」【】『』]")
+
+# LLM 偶尔会把自检、字数统计、关键名词统计或“校验修正”过程写进最终回答。
+# 这些内容不是概念图正文，既不应展示给用户，也不应参与前端解析。
+_META_TAIL_MARKER_RE = re.compile(
+    r"(?is)(?:\s*(?:[（(][^）)]*)?"
+    r"(?:全文共|字数[:：共]?|关键名词共|关键词共|形态A|形态B|"
+    r"校验发现|立即修正|调整后|本次共|以上是|注[:：]|"
+    r"word\s*count|keywords?\s*:|aspects?\s*:|form\s*a|form\s*b))"
+)
+_META_LINE_RE = re.compile(
+    r"(?is)^\s*(?:[（(])?\s*"
+    r"(?:全文共|字数[:：共]?|关键名词共|关键词共|形态A|形态B|"
+    r"校验发现|立即修正|调整后|本次共|以上是|注[:：]|"
+    r"word\s*count|keywords?\s*:|aspects?\s*:|form\s*a|form\s*b)"
+)
+_STREAM_META_LOOKBEHIND_CHARS = 16
 
 
 # ----------------------------------------------------------------------------
@@ -682,7 +683,7 @@ async def _repair_depth_structure(text: str, language: str) -> tuple[str, bool, 
     repaired_raw = ""
     async for chunk in _qwen_chat_stream(
         prompt=repair_prompt,
-        max_tokens=_EXPAND_MAX_TOKENS,
+        max_tokens=_REPAIR_MAX_TOKENS,
         # Pass 3 修复：必须严守"必须六段『』、双分支占比、L5 占比"等结构性硬
         # 约束，禁止任何遣词造句的随机性。temperature=0.0（贪婪解码）让 LLM
         # 在每个 token 位置都选概率最高的候选，最大化对 prompt 的服从度。
@@ -719,12 +720,29 @@ async def _repair_depth_structure(text: str, language: str) -> tuple[str, bool, 
     return text, False, stats
 
 
+def _strip_meta_tail(text: str) -> str:
+    """Remove self-check/statistics tail text from an otherwise valid answer."""
+    if not text:
+        return text
+
+    marker = _META_TAIL_MARKER_RE.search(text)
+    if marker:
+        return text[: marker.start()].rstrip()
+
+    kept_lines = []
+    for line in text.splitlines():
+        if _META_LINE_RE.search(line):
+            break
+        kept_lines.append(line)
+    return "\n".join(kept_lines).rstrip()
+
+
 def _strip_meta_paragraphs(text: str) -> str:
     """
     去除 LLM 输出中混入的"说明性段落"，只保留概念图编号正文。
 
     背景：
-        Qwen 在扩写阶段（甚至有时在第一次生成时）会在概念图编号正文之外
+        Qwen 有时会在概念图编号正文之外
         额外输出一段说明，例如：
             "（字数共 547 字。在每个方面增加了详细描述，扩充至要求范围。）"
             "（全文共 768 字。共 4 个方面，关键名词共 12 个：1. xx 2. yy ...）"
@@ -750,10 +768,14 @@ def _strip_meta_paragraphs(text: str) -> str:
     if not text or not text.strip():
         return text
 
+    text = _strip_meta_tail(text.strip())
+    if not text:
+        return ""
+
     paragraphs = _PARAGRAPH_SPLIT_RE.split(text)
     kept = []
     for p in paragraphs:
-        p_stripped = p.strip()
+        p_stripped = _strip_meta_tail(p.strip())
         if not p_stripped:
             continue
         if (
@@ -767,77 +789,6 @@ def _strip_meta_paragraphs(text: str) -> str:
         return text.strip()
 
     return "\n\n".join(kept)
-
-
-def _build_expand_prompt(original_text: str, language: str) -> str:
-    """
-    构造"扩写"阶段的 prompt：要求 LLM 在保留原文格式与方面数量的前提下，
-    补足内容到 700-800 字。
-    """
-    if language == "en":
-        return (
-            "Below is the concept-map analysis text you just produced:\n\n"
-            "---ORIGINAL START---\n"
-            f"{original_text}\n"
-            "---ORIGINAL END---\n\n"
-            "However, it has only "
-            f"{len(original_text)} characters, "
-            "which is BELOW the 700~800-word HARD requirement.\n\n"
-            "Please rewrite the original text under the following STRICT rules:\n"
-            "1. **DO NOT** change the number of aspects, the numbering (1./2./3./4.) "
-            "or valid existing connector words 「」. If a connector is only a discourse "
-            "adverb/sequence word such as 'also', 'further', 'meanwhile', or 'then', "
-            "rewrite it as a predicate relation phrase.\n"
-            "2. For each aspect, ADD MORE Form-A key-noun chains "
-            "(「connectorB」+【key noun】+『verb』+『object』) into the 'details' "
-            "section, OR expand the existing 『verb』『object』 phrases with more detail.\n"
-            "3. Final TOTAL length MUST fall STRICTLY between 700 and 800 words. "
-            "If the expanded text exceeds 800, prune; below 700, expand more.\n"
-            "4. All `「」` and `『』` MUST contain real, non-empty content. "
-            "No empty brackets, no placeholder like '...', 'TBD', 'input relation'.\n"
-            "5. Every edge must pass the proposition test: node A + connector + node B "
-            "must read like a complete statement, not a transition phrase.\n"
-            "6. Output **ONLY the full rewritten text** in the same format as the "
-            "original. No diff, no explanation, no JSON, no introduction.\n"
-        )
-
-    if language == "zh-tw":
-        return (
-            "以下是你剛才輸出的概念圖分析正文：\n\n"
-            "---原文開始---\n"
-            f"{original_text}\n"
-            "---原文結束---\n\n"
-            f"但字數只有 {len(original_text)} 字，**未達到 700-800 字的硬性要求**。\n\n"
-            "請以下列嚴格規則重寫原文：\n"
-            "1. **不要**改變方面數量、不要修改編號 1./2./3./4. 與合格的已有連接詞 「」；若已有連接詞只是「同時」「進一步」等篇章詞，必須改成謂語/關係短語；\n"
-            "2. 在每個方面的「具體內容」段中，**追加更多形態A 關鍵名詞鏈**\n"
-            "   （即 「連接詞B」+【關鍵名詞】+『動詞』+『賓語』），\n"
-            "   或對現有 『動詞』『賓語』 寫得更詳細；\n"
-            "3. 整體字數**嚴格 700-800 字之間**，超 800 字必須精簡，低於 700 字必須再擴；\n"
-            "4. 所有 `「」` 與 `『』` 必須有真實非空內容，禁止空括號、禁止 「…」「待補充」等占位；\n"
-            "5. 每條邊都必須通過命題自檢：節點A + 連接詞 + 節點B 要能讀成完整句子，不能只是過渡詞；\n"
-            "6. **只輸出**重寫後的完整正文，格式與原文一致，不要返回 diff、不要解釋、"
-            "不要返回 JSON、不要任何前後綴說明。\n"
-        )
-
-    # default 简体中文
-    return (
-        "以下是你刚才输出的概念图分析正文：\n\n"
-        "---原文开始---\n"
-        f"{original_text}\n"
-        "---原文结束---\n\n"
-        f"但字数只有 {len(original_text)} 字，**未达到 700-800 字的硬性要求**。\n\n"
-        "请以下列严格规则重写原文：\n"
-        "1. **不要**改变方面数量、不要修改编号 1./2./3./4. 与合格的已有连接词 「」；若已有连接词只是“同时”“进一步”等篇章词，必须改成谓语/关系短语；\n"
-        "2. 在每个方面的「具体内容」段中，**追加更多形态A 关键名词链**\n"
-        "   （即 「连接词B」+【关键名词】+『动词』+『宾语』），\n"
-        "   或对现有 『动词』『宾语』 写得更详细；\n"
-        "3. 整体字数**严格 700-800 字之间**，超 800 字必须精简，低于 700 字必须再扩；\n"
-        "4. 所有 `「」` 与 `『』` 必须有真实非空内容，禁止空括号、禁止「…」「待补充」等占位；\n"
-        "5. 每条边都必须通过命题自检：节点A + 连接词 + 节点B 要能读成完整句子，不能只是过渡词；\n"
-        "6. **只输出**重写后的完整正文，格式与原文一致，不要返回 diff、不要解释、"
-        "不要返回 JSON、不要任何前后缀说明。\n"
-    )
 
 
 def _sse_event(event: str, **fields: object) -> str:
@@ -887,7 +838,7 @@ async def generate_concept_map_text(
     async def generate():
         first_pass_text = ""
         final_text = ""
-        expanded = False
+        visible_sent_len = 0
         try:
             # =========================================================
             # Pass 1: 流式生成（用户实时看到正文逐字流出）
@@ -911,7 +862,20 @@ async def generate_concept_map_text(
                 if not text_chunk:
                     continue
                 first_pass_text += text_chunk
-                yield _sse_event("message", answer=text_chunk)
+                visible_text = _strip_meta_tail(first_pass_text)
+                safe_visible_len = max(
+                    0,
+                    len(visible_text) - _STREAM_META_LOOKBEHIND_CHARS,
+                )
+                if safe_visible_len > visible_sent_len:
+                    delta = visible_text[visible_sent_len:safe_visible_len]
+                    visible_sent_len = safe_visible_len
+                    yield _sse_event("message", answer=delta)
+
+            visible_text = _strip_meta_tail(first_pass_text)
+            if len(visible_text) > visible_sent_len:
+                yield _sse_event("message", answer=visible_text[visible_sent_len:])
+                visible_sent_len = len(visible_text)
 
             # 清洗 pass1 输出：
             #   1) 去除"说明段"（_strip_meta_paragraphs）
@@ -951,126 +915,19 @@ async def generate_concept_map_text(
             )
 
             # =========================================================
-            # Pass 2 (可选): 字数不足时自动扩写。判断字数用清洗后的字符数，
-            # 避免 LLM 用大段说明文字"凑字数"绕过下限。
-            #
-            # 注意"保护已合规的 pass1"：如果 pass1 的结构 stats 已经 valid=True，
-            # 且字数差距不大（≤ 60 字），就不冒险触发扩写——因为 LLM 在扩写
-            # 阶段往往会把原本合规的 50/50 双分支占比、形态A/B 比例打乱
-            # （倾向"全 6 段"策略），结果反而把好的输出搞坏。
+            # Pass 2 removed: no automatic word-count expansion.
+            # Only replace the visible stream when pass1 needed cleanup
+            # (metadata/self-check text removed or connectors filled).
             # =========================================================
-            char_short = _MIN_TARGET_CHARS - len(cleaned_first)
-            pass1_too_short = 50 < len(cleaned_first) < _MIN_TARGET_CHARS
-            pass1_already_good = pass1_stats["valid"] and char_short <= 60
-            if pass1_too_short and not pass1_already_good:
-                expanded = True
-                logger.info(
-                    "[ConceptMapText] ----- PASS 2 TRIGGERED ----- "
-                    "(reason: cleaned_chars=%d < min=%d, pass1_valid=%s)",
-                    len(cleaned_first),
-                    _MIN_TARGET_CHARS,
-                    pass1_stats["valid"],
-                )
-                # 给用户一个可见提示
-                notice = _EXPAND_NOTICE.get(lang, _EXPAND_NOTICE["zh"])
-                yield _sse_event("message", answer=notice)
-
-                # 扩写以"已清洗的 pass1"作为参考，免得 LLM 把说明段当成正文一起改写
-                expand_prompt = _build_expand_prompt(cleaned_first, lang)
-                expanded_text = ""
-                async for chunk in _qwen_chat_stream(
-                    prompt=expand_prompt,
-                    max_tokens=_EXPAND_MAX_TOKENS,
-                    # Pass 2 字数扩写：在 pass1 已有原文基础上补字数，必须保留
-                    # 原有方面/编号/连接词/形态A 结构，禁止"创意改写"。
-                    # 同样设为 0.0 走贪婪解码。Qwen 非推理模型会响应该参数；
-                    # qwq 等推理模型可能忽略它。
-                    temperature=0.0,
-                    request_type="concept_map_text_expand",
-                ):
-                    if not chunk:
-                        continue
-                    text_chunk = chunk if isinstance(chunk, str) else str(chunk)
-                    if not text_chunk:
-                        continue
-                    expanded_text += text_chunk
-
-                cleaned_expanded = _strip_meta_paragraphs(expanded_text.strip())
-                cleaned_expanded = _fill_missing_connectors(cleaned_expanded, lang)
-                logger.info(
-                    "[ConceptMapText] pass2 raw_chars=%d cleaned_chars=%d (was %d)",
-                    len(expanded_text.strip()),
-                    len(cleaned_expanded),
-                    len(cleaned_first),
-                )
-                logger.info(
-                    "[ConceptMapText] pass2 raw_text=%s",
-                    _preview(expanded_text.strip()),
-                )
-                logger.info(
-                    "[ConceptMapText] pass2 cleaned_text=%s",
-                    _preview(cleaned_expanded),
-                )
-                # Pass 2 的接受闸门：必须同时满足三个硬性条件，否则回退 pass1。
-                # 经验表明 LLM 在扩写阶段很容易"过度施工"（把原本合规的 50/50
-                # 双分支比例改成全 6 段、把形态B 改成形态A、把字数从 670 字扩
-                # 到 956 字），结果是用更长但更不合规的文本"覆盖"原本健康的
-                # pass1 输出。这里用 stats 做结构守门：
-                #   1) 字数比 pass1 长（不能反而变短）
-                #   2) 字数不超过上限（不能膨胀超过 _MAX_TARGET_CHARS）
-                #   3) **不能比 pass1 更不合规**（不能把 valid=True 的 pass1
-                #       打成 valid=False 的 pass2）
-                pass2_stats = _concept_map_depth_stats(cleaned_expanded)
-                pass2_grew = len(cleaned_expanded) >= len(cleaned_first)
-                pass2_within_max = len(cleaned_expanded) <= _MAX_TARGET_CHARS
-                pass2_not_worse = pass2_stats["valid"] or not pass1_stats["valid"]
-                logger.info(
-                    "[ConceptMapText] pass2 acceptance check: grew=%s within_max=%s "
-                    "not_worse_than_pass1=%s pass1_valid=%s pass2_valid=%s "
-                    "pass2_stats=%s",
-                    pass2_grew,
-                    pass2_within_max,
-                    pass2_not_worse,
-                    pass1_stats["valid"],
-                    pass2_stats["valid"],
-                    json.dumps(pass2_stats, ensure_ascii=False),
-                )
-                if pass2_grew and pass2_within_max and pass2_not_worse:
-                    final_text = cleaned_expanded
-                    yield _sse_event("message_replace", answer=final_text)
-                    logger.info(
-                        "[ConceptMapText] pass2 ACCEPTED: final replaced with expanded text"
-                    )
-                else:
-                    # 扩写不合格，回退到 pass1 清洗版；如果 pass1 本身脏，仍发 replace
-                    reason = []
-                    if not pass2_grew:
-                        reason.append(f"shorter({len(cleaned_expanded)}<{len(cleaned_first)})")
-                    if not pass2_within_max:
-                        reason.append(f"over_max({len(cleaned_expanded)}>{_MAX_TARGET_CHARS})")
-                    if not pass2_not_worse:
-                        reason.append("broke_pass1_valid_structure")
-                    logger.warning(
-                        "[ConceptMapText] pass2 REJECTED: %s, keeping pass1 cleaned",
-                        ", ".join(reason),
-                    )
-                    if first_dirty:
-                        yield _sse_event("message_replace", answer=cleaned_first)
-                    else:
-                        # pass1 干净且 pass2 被拒：前端 streamingBuffer 仍是 pass1 流出的
-                        # 原始文本，这里不需要 message_replace。但要明确把 final_text
-                        # 重置回 pass1（防止下游 pass3 拿到坏的 pass2 文本）
-                        final_text = cleaned_first
-            elif first_dirty:
-                # 字数够但 pass1 输出含说明段：只清洗，不扩写
+            if first_dirty:
                 yield _sse_event("message_replace", answer=cleaned_first)
                 logger.info(
-                    "[ConceptMapText] pass2 SKIPPED (within target range), but pass1 was dirty: "
+                    "[ConceptMapText] pass2 REMOVED; pass1 was dirty: "
                     "sent message_replace with cleaned pass1"
                 )
             else:
                 logger.info(
-                    "[ConceptMapText] pass2 SKIPPED (within target range and pass1 clean)"
+                    "[ConceptMapText] pass2 REMOVED; pass1 clean"
                 )
 
             # =========================================================
@@ -1107,15 +964,22 @@ async def generate_concept_map_text(
                     "[ConceptMapText] PASS 3 SKIPPED (already valid)"
                 )
 
+            final_clean = _fill_missing_connectors(_strip_meta_paragraphs(final_text), lang)
+            if final_clean != final_text:
+                final_text = final_clean
+                yield _sse_event("message_replace", answer=final_text)
+                logger.info(
+                    "[ConceptMapText] final cleanup replaced visible answer"
+                )
+
             # =========================================================
             # 收尾
             # =========================================================
             yield _sse_event("message_end", answer=final_text)
             logger.info(
-                "[ConceptMapText] <<<<< REQUEST COMPLETED final_chars=%d expanded=%s "
+                "[ConceptMapText] <<<<< REQUEST COMPLETED final_chars=%d "
                 "first_dirty=%s final_depth_stats=%s",
                 len(final_text),
-                expanded,
                 first_dirty,
                 json.dumps(depth_stats, ensure_ascii=False),
             )

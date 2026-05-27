@@ -663,31 +663,35 @@ export function useMindMate(options: MindMateOptions = {}) {
         break
 
       case 'message_end':
-        if (currentStreamingId.value) {
-          // Capture the Dify message ID for feedback functionality
-          updateMessage(currentStreamingId.value, streamingBuffer.value, false, data.message_id)
-        }
+        {
+          const completedAnswer = data.answer || streamingBuffer.value
 
-        // Update conversation ID if needed (conversation was already added in 'message' event)
-        if (data.conversation_id && !conversationId.value) {
-          conversationId.value = data.conversation_id
-          mindMateStore.setCurrentConversation(data.conversation_id)
-        }
+          if (currentStreamingId.value) {
+            // Capture the Dify message ID for feedback functionality
+            updateMessage(currentStreamingId.value, completedAnswer, false, data.message_id)
+          }
 
-        // 缓存完整回答文本，以便后续 done 时携带进 message_completed 事件
-        lastCompletedAnswer.value = streamingBuffer.value
+          // Update conversation ID if needed (conversation was already added in 'message' event)
+          if (data.conversation_id && !conversationId.value) {
+            conversationId.value = data.conversation_id
+            mindMateStore.setCurrentConversation(data.conversation_id)
+          }
 
-        streamingBuffer.value = ''
-        currentStreamingId.value = null
-        abortController.value = null
+          // 缓存完整回答文本，以便后续 done 时携带进 message_completed 事件
+          lastCompletedAnswer.value = completedAnswer
 
-        // Fetch Dify's auto-generated title after second message (with 1-second delay)
-        if (mindMateStore.messageCount === 2 && conversationId.value) {
-          const convId = conversationId.value
-          setTimeout(() => {
-            const { mutate: generateTitle } = useGenerateTitle()
-            generateTitle(convId)
-          }, 1000)
+          streamingBuffer.value = ''
+          currentStreamingId.value = null
+          abortController.value = null
+
+          // Fetch Dify's auto-generated title after second message (with 1-second delay)
+          if (mindMateStore.messageCount === 2 && conversationId.value) {
+            const convId = conversationId.value
+            setTimeout(() => {
+              const { mutate: generateTitle } = useGenerateTitle()
+              generateTitle(convId)
+            }, 1000)
+          }
         }
         break
 

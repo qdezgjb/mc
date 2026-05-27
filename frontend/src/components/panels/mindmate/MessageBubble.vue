@@ -66,6 +66,16 @@ function removeThinkBlocks(content: string): string {
   return content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
 }
 
+function stripConceptMeta(content: string): string {
+  if (!content) return content
+  return content
+    .replace(
+      /\s*(?:[（(][^）)]*)?(?:全文共|字数[:：共]?|关键名词共|关键词共|形态A|形态B|校验发现|立即修正|调整后|本次共|以上是|注[:：]|word\s*count|keywords?\s*:|aspects?\s*:|form\s*a|form\s*b)[\s\S]*$/iu,
+      ''
+    )
+    .trim()
+}
+
 /**
  * 去掉 LLM 用于标注概念图结构的三种括号，仅保留括号内的文字：
  *   - 【】：level-3 名词标记
@@ -89,7 +99,7 @@ function stripConceptBrackets(content: string): string {
 // Render markdown with sanitization
 function renderMarkdown(content: string): string {
   if (!content) return ''
-  const cleanedContent = stripConceptBrackets(removeThinkBlocks(content))
+  const cleanedContent = stripConceptBrackets(stripConceptMeta(removeThinkBlocks(content)))
   return sanitizeMarkdownItHtml(md.render(cleanedContent))
 }
 
