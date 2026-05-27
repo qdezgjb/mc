@@ -19,6 +19,12 @@ import { useDiagramStore } from '@/stores'
 import { focusQuestionMutedParts } from '@/stores/diagram/diagramDefaultLabels'
 import type { MindGraphNodeProps } from '@/types'
 import { getBorderStyleProps } from '@/utils/borderStyleUtils'
+import {
+  CONCEPT_MAP_NODE_FONT_SIZE,
+  CONCEPT_MAP_NODE_FONT_WEIGHT,
+  CONCEPT_MAP_NODE_HEIGHT,
+  estimateConceptMapNodeWidth,
+} from '@/utils/conceptMapNodeSize'
 import { getTopicRootConceptTargetId } from '@/utils/conceptMapTopicRootEdge'
 import { DIAGRAM_NODE_FONT_STACK } from '@/utils/diagramNodeFontStack'
 
@@ -60,14 +66,37 @@ const conceptMapInlineMaxWidth = computed(() =>
   isTopic.value ? 'min(820px, 94vw)' : 'min(480px, 92vw)'
 )
 
+/**
+ * 是否需要应用"概念图非 topic 节点"的统一默认尺寸 / 字号。
+ *
+ * 历史上只有"生成概念图"批量构建路径会显式给每个节点写 style.width/
+ * height/fontSize/fontWeight；其它路径（专家骨架图卡片拖入、手动添加、
+ * 复制粘贴等）都不写 style，节点最后只继承 CSS `min-width: 80px;
+ * min-height: 36px`，渲染出的尺寸明显偏小，与已有节点视觉割裂。
+ *
+ * 这里把"生成节点的非 isMajor 默认值"——也就是 utils/conceptMapNodeSize
+ * 模块导出的常量集——在 ConceptNode 渲染层兜底应用：只要节点没显式
+ * 设置某项 style，就用统一默认值。topic 节点（焦点问题框）保留它原有的
+ * 760×104 / 字号 30 配置，不受影响。
+ */
+const useConceptMapBranchDefaults = computed(
+  () => props.data.diagramType === 'concept_map' && !isTopic.value
+)
+
 const dimensionStyle = computed(() => {
   const style = props.data.style || {}
   const topicDefaults =
     isTopic.value && props.data.diagramType === 'concept_map'
       ? { width: 760, height: 104 }
       : {}
-  const width = style.width ?? topicDefaults.width
-  const height = style.height ?? topicDefaults.height
+  const branchDefaults = useConceptMapBranchDefaults.value
+    ? {
+        width: estimateConceptMapNodeWidth(props.data.label ?? ''),
+        height: CONCEPT_MAP_NODE_HEIGHT,
+      }
+    : {}
+  const width = style.width ?? topicDefaults.width ?? branchDefaults.width
+  const height = style.height ?? topicDefaults.height ?? branchDefaults.height
   return {
     ...(width ? { width: `${width}px`, minWidth: `${width}px` } : {}),
     ...(height ? { minHeight: `${height}px` } : {}),
@@ -103,12 +132,30 @@ const nodeStyle = computed(() => {
   const borderStyle = props.data.style?.borderStyle || 'solid'
   const backgroundColor =
     props.data.style?.backgroundColor || defaultStyle.value.backgroundColor || '#e3f2fd'
+  // 概念图非 topic 节点：未显式设置时，fontSize/fontWeight 也兜底到统一
+  // 放大档位（22px / normal），与 dimensionStyle 的 height 兜底配套，避免
+  // 出现"宽高被放大但字号还是 16px"的不协调状态。
+  const conceptMapFontSize = useConceptMapBranchDefaults.value
+    ? CONCEPT_MAP_NODE_FONT_SIZE
+    : null
+  const conceptMapFontWeight = useConceptMapBranchDefaults.value
+    ? CONCEPT_MAP_NODE_FONT_WEIGHT
+    : null
   return {
     backgroundColor,
     color: props.data.style?.textColor || defaultStyle.value.textColor || '#333333',
     fontFamily: props.data.style?.fontFamily || DIAGRAM_NODE_FONT_STACK,
-    fontSize: `${props.data.style?.fontSize || defaultStyle.value.fontSize || 16}px`,
-    fontWeight: props.data.style?.fontWeight || defaultStyle.value.fontWeight || 'normal',
+    fontSize: `${
+      props.data.style?.fontSize ||
+      conceptMapFontSize ||
+      defaultStyle.value.fontSize ||
+      16
+    }px`,
+    fontWeight:
+      props.data.style?.fontWeight ||
+      conceptMapFontWeight ||
+      defaultStyle.value.fontWeight ||
+      'normal',
     fontStyle: props.data.style?.fontStyle || 'normal',
     textDecoration: props.data.style?.textDecoration || 'none',
     ...getBorderStyleProps(borderColor, borderWidth, borderStyle, {

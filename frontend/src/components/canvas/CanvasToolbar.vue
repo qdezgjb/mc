@@ -26,6 +26,12 @@ import {
   extractRootFromFocusQuestion,
   parseDiagramGenerationResponse,
 } from '@/utils/conceptMapExtraction'
+import {
+  CONCEPT_MAP_NODE_FONT_SIZE,
+  CONCEPT_MAP_NODE_FONT_WEIGHT,
+  CONCEPT_MAP_NODE_HEIGHT,
+  estimateConceptMapNodeWidth,
+} from '@/utils/conceptMapNodeSize'
 
 import CanvasMathInsertDialog from './CanvasMathInsertDialog.vue'
 import CanvasToolbarAddDelete from './CanvasToolbarAddDelete.vue'
@@ -38,22 +44,18 @@ import CanvasToolbarTextDropdown from './CanvasToolbarTextDropdown.vue'
 import CanvasToolbarUndoRedo from './CanvasToolbarUndoRedo.vue'
 import CanvasVirtualKeyboardPanel from './CanvasVirtualKeyboardPanel.vue'
 
-function estimateGeneratedConceptNodeWidth(text: string): number {
-  const plain = String(text || '').replace(/\s+/gu, '').trim()
-  const chars = Array.from(plain)
-  const cjkCount = chars.filter((ch) => /[\u4e00-\u9fff]/u.test(ch)).length
-  const otherCount = Math.max(0, chars.length - cjkCount)
-  const estimated = 90 + cjkCount * 19 + otherCount * 12
-  return Math.max(220, Math.min(estimated, 420))
-}
-
 function getGeneratedConceptNodeStyle(level: 1 | 2 | 3 | 4 | 5, text: string) {
+  // 概念图非 topic 节点的"标准放大尺寸"由 utils/conceptMapNodeSize.ts 统一
+  // 控制，这里只在 isMajor（L1 根 / L2 方面）的情况下叠加一档"更突出"
+  // 的视觉权重——更高一点点（78 vs 70）+ 更大字号（24 vs 22）+ 加粗。
+  // 共用同一个 estimateConceptMapNodeWidth 保证生成节点和拖入节点 / 手动
+  // 添加节点的宽度规则完全一致，画布上不会再出现"小气泡"和"大气泡"混排。
   const isMajor = level <= 2
   return {
-    width: estimateGeneratedConceptNodeWidth(text),
-    height: isMajor ? 78 : 70,
-    fontSize: isMajor ? 24 : 22,
-    fontWeight: isMajor ? 'bold' : 'normal',
+    width: estimateConceptMapNodeWidth(text),
+    height: isMajor ? 78 : CONCEPT_MAP_NODE_HEIGHT,
+    fontSize: isMajor ? 24 : CONCEPT_MAP_NODE_FONT_SIZE,
+    fontWeight: isMajor ? 'bold' : CONCEPT_MAP_NODE_FONT_WEIGHT,
   } as const
 }
 
