@@ -5,19 +5,18 @@ Concept Map · Text Generation Stream API
 提供给画布"概念图教学设计"专用的流式生成接口：
 - POST /api/concept_map/generate-concept-map-text
 
-为什么直接调 DeepSeek 官方 API（不走 Dify 也不走 llm_service）？
+为什么直接调 Qwen Dashscope 兼容接口（不走 Dify 也不走 llm_service）？
     1. /api/ai_assistant/stream 走 Dify chatflow 工作流，里面通常含一个
        JSON 抽取 / Code 节点期望前序 LLM 输出 ```json...```。而概念图生成
        prompt 要求 LLM 输出**纯文本**（含【】「」『』 三类括号，且明确
        "不要返回 JSON"），会导致 Dify 报：
            "Run failed: could not find json block in the output."
-    2. 项目内的 llm_service 把 model="deepseek" 通过负载均衡分流到
-       dashscope (deepseek-v3.1) 和 volcengine (用户自建接入点) 两条路；
-       dashscope 端是非推理模型，对本接口的多重硬约束 prompt 服从度差，
-       结果不稳定。
-    本接口因此**直接调 DeepSeek 官方 chat completions**（默认模型
-    `deepseek-reasoner` 即 R1，MoE 专家 + 深度思考），按 SSE 协议流式
-    返回纯文本 chunk。配置见 .env 中 DEEPSEEK_OFFICIAL_* 三项。
+    2. 项目内的 llm_service 走负载均衡 / 速率限制 / 知识库注入 / Token
+       计费等通用链路，不便在这种需要硬约束 prompt + SSE 长连接的场景里
+       做精细控制（例如温度、超时、流式 reasoning 分流）。
+    本接口因此**直接调 Qwen 的 Dashscope OpenAI 兼容 chat completions**
+    （默认模型 `qwen-plus-latest`），按 SSE 协议流式返回纯文本 chunk。
+    配置见 .env 中 QWEN_API_KEY / QWEN_API_URL / QWEN_MODEL_GENERATION。
 
 字数兜底策略（auto-expand）：
     实测 Qwen 在 700-800 字下限指令下经常只输出 200-300 字就自然停止——
@@ -124,30 +123,56 @@ def _preview(text: object, head: int = _LOG_PREVIEW_HEAD, tail: int = _LOG_PREVI
     return f"{head_part} … <省略 {n - head - tail} 字> … {tail_part}"
 
 # ----------------------------------------------------------------------------
-# DeepSeek 官方 API 直连配置
+# Qwen Dashscope (OpenAI 兼容) 直连配置
 #
-# 概念图教学设计文本生成专用通道：直接调 DeepSeek 官方 chat completions，
-# 绕开本项目内部的负载均衡 / 速率限制 / 知识库注入 / Dify 工作流，原因：
+# 概念图教学设计文本生成专用通道：直接调阿里云 Dashscope OpenAI 兼容
+# chat completions（即通义千问 Qwen 系列），绕开本项目内部的负载均衡 /
+# 速率限制 / 知识库注入 / Dify 工作流。原因：
 #   1. 概念图 prompt 中含大量复杂硬约束（5 层结构、3-4 方面、L5 占比等），
-#      非推理模型很容易丢约束。R1 (deepseek-reasoner) 是 MoE 专家 + 深度思考
-#      推理模型，对长格式硬约束的服从度显著高于 V3.1 / qwen-plus。
-#   2. 项目内的 "deepseek" 别名走的是 dashscope/volcengine 50/50 负载均衡，
-#      其中 dashscope 端绑定的是 deepseek-v3.1（非推理模型），效果不稳定。
+#      Pass 2/3 还要在原文基础上做结构修复 / 字数扩写，链路必须能精细控制
+#      temperature、max_tokens、超时和 SSE 长连接。
+#   2. 项目内 llm_service 的"qwen"别名会经过额外的负载均衡、QPM 限速和
+#      统一缓存，不适合本接口"长 prompt + 严格格式 + 多次重试"的场景。
+#   3. Qwen Dashscope 兼容接口直接复用 OpenAI 的 chat completions schema
+#      （payload/SSE 一致），可以最大程度复用通用流式解析代码。
 #
-# 流式响应中 R1 会先输出 reasoning_content（思考过程，可能持续数十秒）再
-# 输出 content。本通道丢弃 reasoning_content，只把 content 转发给前端，
-# 因此用户在思考阶段会看到一段空白延迟（这是 R1 推理模型的固有特性）。
+# 兼容说明：
+#   - 若以后切换到 Qwen 的推理模型（如 qwen-plus 启用 enable_thinking，或
+#     qwq 系列），返回流里会出现 delta.reasoning_content。本通道仍然只把
+#     content 推给前端，reasoning_content 仅做日志聚合，不会污染正文解析。
+#   - QWEN_API_URL 既可以填**完整的** chat completions URL，也可以填
+#     **base URL**（自动追加 /chat/completions），两者都兼容。
 # ----------------------------------------------------------------------------
-_DEEPSEEK_OFFICIAL_API_KEY_ENV = "DEEPSEEK_OFFICIAL_API_KEY"
-_DEEPSEEK_OFFICIAL_BASE_URL_ENV = "DEEPSEEK_OFFICIAL_BASE_URL"
-_DEEPSEEK_OFFICIAL_MODEL_ENV = "DEEPSEEK_OFFICIAL_MODEL"
-_DEEPSEEK_OFFICIAL_DEFAULT_BASE_URL = "https://api.deepseek.com"
-_DEEPSEEK_OFFICIAL_DEFAULT_MODEL = "deepseek-reasoner"
-# R1 思考阶段可能 30~120 秒，再加上 content 输出时间，整体超时给到 5 分钟。
-_DEEPSEEK_OFFICIAL_STREAM_TIMEOUT = 300.0
+_QWEN_API_KEY_ENV = "QWEN_API_KEY"
+_QWEN_API_URL_ENV = "QWEN_API_URL"
+_QWEN_MODEL_ENV = "QWEN_MODEL_GENERATION"
+_QWEN_DEFAULT_API_URL = (
+    "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+)
+_QWEN_DEFAULT_MODEL = "qwen-plus-latest"
+# Qwen-plus 非推理模型一般 10~60 秒就能跑完；推理变种（qwq / thinking 模式）
+# 可能 1~3 分钟。统一给到 5 分钟，足够覆盖最坏情况。
+_QWEN_STREAM_TIMEOUT = 300.0
 
 
-async def _deepseek_official_chat_stream(
+def _resolve_qwen_chat_completions_url(raw: str) -> str:
+    """
+    把环境变量里的 URL 归一化为最终 chat completions endpoint。
+
+    用户在 .env 里可能写两种：
+      - 完整 URL：".../compatible-mode/v1/chat/completions"
+      - base URL：".../compatible-mode/v1"
+    都要能直接 POST，不能让用户填错一种就 404。
+    """
+    url = (raw or "").strip().rstrip("/")
+    if not url:
+        return _QWEN_DEFAULT_API_URL
+    if url.endswith("/chat/completions"):
+        return url
+    return f"{url}/chat/completions"
+
+
+async def _qwen_chat_stream(
     prompt: str,
     *,
     temperature: float,
@@ -155,34 +180,27 @@ async def _deepseek_official_chat_stream(
     request_type: str,
 ) -> AsyncGenerator[str, None]:
     """
-    流式调用 DeepSeek 官方 chat completions。
+    流式调用 Qwen Dashscope OpenAI 兼容 chat completions。
 
-    只 yield 最终答案（`delta.content`），丢弃思考内容（`delta.reasoning_content`）。
+    只 yield 最终答案（`delta.content`）。若返回里出现 `delta.reasoning_content`
+    （Qwen 推理变种），仅做日志聚合，不推送到前端，避免污染概念图正文解析。
 
-    NOTE on temperature: deepseek-reasoner (R1) 在官方实现里会**忽略** temperature
-    参数，但 deepseek-chat (V3) 仍然会使用它。我们在调用层保留 temperature，
-    模型层面是否生效由 DEEPSEEK_OFFICIAL_MODEL 环境变量切换决定。
+    NOTE on temperature: qwen-plus / qwen-max 等非推理模型会响应 temperature；
+    qwq / qwen-plus(thinking) 等推理模型可能忽略它。我们在调用层无差别传入，
+    具体由 QWEN_MODEL_GENERATION 环境变量切换决定。
     """
-    api_key = (os.getenv(_DEEPSEEK_OFFICIAL_API_KEY_ENV) or "").strip()
+    api_key = (os.getenv(_QWEN_API_KEY_ENV) or "").strip()
     if not api_key:
         raise HTTPException(
             status_code=503,
             detail=(
-                f"{_DEEPSEEK_OFFICIAL_API_KEY_ENV} is not configured; "
-                "concept-map text generation requires DeepSeek official API."
+                f"{_QWEN_API_KEY_ENV} is not configured; "
+                "concept-map text generation requires Qwen API."
             ),
         )
 
-    base_url = (
-        os.getenv(_DEEPSEEK_OFFICIAL_BASE_URL_ENV) or _DEEPSEEK_OFFICIAL_DEFAULT_BASE_URL
-    ).rstrip("/")
-    model = (
-        os.getenv(_DEEPSEEK_OFFICIAL_MODEL_ENV) or _DEEPSEEK_OFFICIAL_DEFAULT_MODEL
-    ).strip()
-
-    # base_url 兼容形如 "https://api.deepseek.com" 与 "https://api.deepseek.com/v1"
-    # 两种写法。chat completions 路径在两种 base 下都是 "<base>/chat/completions"。
-    url = f"{base_url}/chat/completions"
+    url = _resolve_qwen_chat_completions_url(os.getenv(_QWEN_API_URL_ENV) or "")
+    model = (os.getenv(_QWEN_MODEL_ENV) or _QWEN_DEFAULT_MODEL).strip()
 
     payload = {
         "model": model,
@@ -200,7 +218,7 @@ async def _deepseek_official_chat_stream(
     # 调用入口日志：记录模型/URL/温度/max_tokens 和 prompt 头部预览，方便排查
     # "送进去的 prompt 是不是预期的"，以及"参数有没有被改过"。
     logger.info(
-        "[ConceptMapText:%s] >>> CALL DeepSeek model=%s url=%s temperature=%s "
+        "[ConceptMapText:%s] >>> CALL Qwen model=%s url=%s temperature=%s "
         "max_tokens=%s prompt_chars=%d prompt_preview=%s",
         request_type,
         model,
@@ -217,25 +235,26 @@ async def _deepseek_official_chat_stream(
     request_started = time.time()
 
     try:
-        async with httpx.AsyncClient(timeout=_DEEPSEEK_OFFICIAL_STREAM_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_QWEN_STREAM_TIMEOUT) as client:
             async with client.stream("POST", url, headers=headers, json=payload) as resp:
                 if resp.status_code >= 400:
                     body = (await resp.aread()).decode("utf-8", errors="replace")
                     logger.error(
-                        "[ConceptMapText:%s] DeepSeek official API HTTP %s: %s",
+                        "[ConceptMapText:%s] Qwen API HTTP %s: %s",
                         request_type,
                         resp.status_code,
                         body[:500],
                     )
                     raise HTTPException(
                         status_code=502,
-                        detail=f"DeepSeek API error ({resp.status_code})",
+                        detail=f"Qwen API error ({resp.status_code})",
                     )
 
                 async for line in resp.aiter_lines():
                     if not line:
                         continue
-                    # SSE 协议：每个事件以 "data: " 开头；DeepSeek 用 "data: [DONE]" 收尾
+                    # SSE 协议：每个事件以 "data: " 开头；Dashscope 也用
+                    # "data: [DONE]" 收尾（OpenAI 兼容）。
                     if not line.startswith("data:"):
                         continue
                     data_str = line[5:].strip()
@@ -259,8 +278,9 @@ async def _deepseek_official_chat_stream(
                         continue
                     delta = choices[0].get("delta") or {}
 
-                    # R1: reasoning_content 是思考阶段的 token 流；只做日志聚合，
-                    # 不发到前端（避免污染概念图正文解析）。
+                    # Qwen 推理变种（qwq / thinking 模式）会先输出 reasoning_content；
+                    # qwen-plus / qwen-max 默认不会有这段。统一只做日志聚合，不发前端，
+                    # 避免污染概念图正文解析。
                     reasoning_piece = delta.get("reasoning_content")
                     if reasoning_piece:
                         reasoning_buf.append(reasoning_piece)
@@ -272,7 +292,7 @@ async def _deepseek_official_chat_stream(
                             content_started = True
                             elapsed = time.time() - request_started
                             logger.info(
-                                "[ConceptMapText:%s] reasoning phase finished: "
+                                "[ConceptMapText:%s] first content token: "
                                 "thinking_chars=%d elapsed=%.1fs, content stream begins",
                                 request_type,
                                 sum(len(p) for p in reasoning_buf),
@@ -281,7 +301,7 @@ async def _deepseek_official_chat_stream(
                         content_buf.append(content_piece)
                         yield content_piece
         # 流结束后完整记录 reasoning + content 两段的字符数和内容预览，
-        # 便于诊断 R1 是否在 reasoning 里完成了任务但 content 输出失败/被截断。
+        # 便于诊断模型是否在 reasoning 里完成了任务但 content 输出失败/被截断。
         reasoning_full = "".join(reasoning_buf)
         content_full = "".join(content_buf)
         logger.info(
@@ -307,16 +327,16 @@ async def _deepseek_official_chat_stream(
         raise
     except httpx.TimeoutException as e:
         logger.error(
-            "[ConceptMapText:%s] DeepSeek official API timeout: %s", request_type, e
+            "[ConceptMapText:%s] Qwen API timeout: %s", request_type, e
         )
-        raise HTTPException(status_code=504, detail="DeepSeek API timeout")
+        raise HTTPException(status_code=504, detail="Qwen API timeout")
     except httpx.HTTPError as e:
         logger.error(
-            "[ConceptMapText:%s] DeepSeek official API transport error: %s",
+            "[ConceptMapText:%s] Qwen API transport error: %s",
             request_type,
             e,
         )
-        raise HTTPException(status_code=502, detail="DeepSeek API transport error")
+        raise HTTPException(status_code=502, detail="Qwen API transport error")
 
 # 提示用户正在扩写的中转文本（按语言分），插入第一次输出与扩写结果之间。
 _EXPAND_NOTICE = {
@@ -660,13 +680,14 @@ async def _repair_depth_structure(text: str, language: str) -> tuple[str, bool, 
 
     repair_prompt = _build_depth_repair_prompt(text, language, stats)
     repaired_raw = ""
-    async for chunk in _deepseek_official_chat_stream(
+    async for chunk in _qwen_chat_stream(
         prompt=repair_prompt,
         max_tokens=_EXPAND_MAX_TOKENS,
         # Pass 3 修复：必须严守"必须六段『』、双分支占比、L5 占比"等结构性硬
         # 约束，禁止任何遣词造句的随机性。temperature=0.0（贪婪解码）让 LLM
         # 在每个 token 位置都选概率最高的候选，最大化对 prompt 的服从度。
-        # 注：deepseek-reasoner (R1) 会忽略此参数；deepseek-chat (V3) 生效。
+        # 注：qwen-plus / qwen-max 等非推理模型会响应该参数；qwq 等推理模型
+        # 可能忽略它（具体由 QWEN_MODEL_GENERATION 切换决定）。
         temperature=0.0,
         request_type="concept_map_text_depth_repair",
     ):
@@ -871,7 +892,7 @@ async def generate_concept_map_text(
             # =========================================================
             # Pass 1: 流式生成（用户实时看到正文逐字流出）
             # =========================================================
-            async for chunk in _deepseek_official_chat_stream(
+            async for chunk in _qwen_chat_stream(
                 prompt=prompt,
                 max_tokens=_GEN_MAX_TOKENS,
                 # Pass 1 首次生成：本接口 prompt 包含 7~8 条互相耦合的硬约束
@@ -879,8 +900,8 @@ async def generate_concept_map_text(
                 # 字 / 连接词非空 / 占位词禁用 等）。**约束越多，温度越低**。
                 # 设为 0.0 让 LLM 在每个 token 都走贪婪解码，最大化格式服从度。
                 # 副作用：同一焦点问题反复生成会得到几乎相同的结果（无多样性）—
-                # 这是用户明确要求的取舍。注：deepseek-reasoner (R1) 会忽略此
-                # 参数（R1 自带思考链确定性较强）；deepseek-chat (V3) 生效。
+                # 这是用户明确要求的取舍。Qwen 非推理模型会响应该参数；qwq
+                # 等推理模型可能忽略它。
                 temperature=0.0,
                 request_type="concept_map_text_generation",
             ):
@@ -957,13 +978,13 @@ async def generate_concept_map_text(
                 # 扩写以"已清洗的 pass1"作为参考，免得 LLM 把说明段当成正文一起改写
                 expand_prompt = _build_expand_prompt(cleaned_first, lang)
                 expanded_text = ""
-                async for chunk in _deepseek_official_chat_stream(
+                async for chunk in _qwen_chat_stream(
                     prompt=expand_prompt,
                     max_tokens=_EXPAND_MAX_TOKENS,
                     # Pass 2 字数扩写：在 pass1 已有原文基础上补字数，必须保留
                     # 原有方面/编号/连接词/形态A 结构，禁止"创意改写"。
-                    # 同样设为 0.0 走贪婪解码。注：deepseek-reasoner (R1) 会
-                    # 忽略此参数；deepseek-chat (V3) 生效。
+                    # 同样设为 0.0 走贪婪解码。Qwen 非推理模型会响应该参数；
+                    # qwq 等推理模型可能忽略它。
                     temperature=0.0,
                     request_type="concept_map_text_expand",
                 ):
